@@ -35,7 +35,7 @@
 
   --card-w: 62px;
   --card-h: 92px;
-  --strip-w: 20px;
+  --strip-w: 24px;
   --radius: 6px;
 }
 
@@ -43,7 +43,7 @@
   :root {
     --card-w: 52px;
     --card-h: 78px;
-    --strip-w: 17px;
+    --strip-w: 20px;
   }
 }
 
@@ -445,6 +445,7 @@ body {
   font-size: 0.55rem;
   opacity: 0.8;
   text-align: center;
+  white-space: nowrap;
 }
 
 /* Joker rainbow strip */
@@ -477,8 +478,7 @@ body {
   flex-direction: column;
   align-items: center;
   justify-content: space-between;
-  padding: 2px;
-  font-size: 0.5rem;
+  padding: 3px 2px;
   font-weight: 700;
   cursor: default;
   flex-shrink: 0;
@@ -648,6 +648,7 @@ body {
   <div class="title-block">
     <h1>Ben Mü</h1>
     <div class="subtitle">A BZF Trick-Taking Game</div>
+    <div style="font-size:0.75rem;color:var(--text-dim);letter-spacing:0.08em;margin-top:6px;">v1.0.0</div>
   </div>
   <div class="setup-card">
     <h2>New Game</h2>
@@ -662,6 +663,14 @@ body {
         <button class="count-btn selected" data-n="4">4</button>
         <button class="count-btn" data-n="5">5</button>
         <button class="count-btn" data-n="6">6</button>
+      </div>
+    </div>
+    <div class="form-group">
+      <label>AI Difficulty</label>
+      <div class="player-count-group" id="difficulty-btns">
+        <button class="count-btn selected" data-d="easy">Easy</button>
+        <button class="count-btn" data-d="medium">Medium</button>
+        <button class="count-btn" data-d="hard">Hard</button>
       </div>
     </div>
     <div class="form-group">
@@ -864,10 +873,10 @@ const RANKS = [
   { rank:2,  name:'2',      face:'2',  strip:'2',  count:1, cat:'Star',    iVP:5,  eVP:5,  pen:0,  dualVP:true },
   { rank:3,  name:'3',      face:'3',  strip:'3',  count:1, cat:'Arrow',   iVP:0,  eVP:5,  pen:0  },
   { rank:4,  name:'4',      face:'4',  strip:'4',  count:1, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
-  { rank:5,  name:'5',      face:'5',  strip:'5',  count:3, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
+  { rank:5,  name:'5',      face:'5',  strip:'5',  count:3, cat:'Arrow',   iVP:0,  eVP:10, pen:0,  dualArrow:true },
   { rank:6,  name:'6',      face:'6',  strip:'6',  count:1, cat:'Arrow',   iVP:0,  eVP:5,  pen:0  },
   { rank:7,  name:'7',      face:'7',  strip:'7',  count:1, cat:'Skull',   iVP:0,  eVP:-5, pen:-5 },
-  { rank:8,  name:'8',      face:'8',  strip:'8',  count:3, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
+  { rank:8,  name:'8',      face:'8',  strip:'8',  count:3, cat:'Arrow',   iVP:0,  eVP:5,  pen:0  },
   { rank:9,  name:'9',      face:'9',  strip:'9',  count:1, cat:'Star',    iVP:5,  eVP:-5, pen:0,  dualVP:true },
   { rank:10, name:'10',     face:'10', strip:'10', count:1, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
   { rank:11, name:'Page',   face:'Pg', strip:'11', count:2, cat:'Star',    iVP:5,  eVP:0,  pen:0  },
@@ -877,12 +886,21 @@ const RANKS = [
 ];
 
 const GOAL_TABLE = {
-  1: { goal:30 },
-  2: { goal:40 },
-  3: { goal:50 },
-  4: { goal:60 },
-  5: { goal:65 },
-  6: { goal:70 },
+  1: { goal:75 },
+  2: { goal:100 },
+  3: { goal:125 },
+  4: { goal:150 },
+  5: { goal:165 },
+  6: { goal:175 },
+};
+
+const GOAL_TABLE_5P = {
+  1: { goal:145 },
+  2: { goal:195 },
+  3: { goal:245 },
+  4: { goal:295 },
+  5: { goal:325 },
+  6: { goal:340 },
 };
 
 function buildDeck(usedSuits, rankFilter) {
@@ -911,6 +929,7 @@ function buildDeck(usedSuits, rankFilter) {
           eVP: r.eVP,
           pen: r.pen,
           dualVP: r.dualVP || false,
+          dualArrow: r.dualArrow || false,
           isJoker: false,
           jokerRole: null,
           vpLabel: vpLabel(r),
@@ -939,7 +958,7 @@ function buildDeck(usedSuits, rankFilter) {
       pen: -5,
       isJoker: true,
       jokerRole: role,
-      vpLabel: role === 'TD' ? '↑+5' : '↑☠',
+      vpLabel: role === 'TD' ? '▲+5' : '▲☠',
     });
   }
 
@@ -947,12 +966,13 @@ function buildDeck(usedSuits, rankFilter) {
 }
 
 function vpLabel(r) {
+  if (r.dualArrow) return '▲▲';
   if (r.dualVP) {
-    if (r.rank === 2) return '★↑';  // +5★ immediate + +5↑ end of hand
-    if (r.rank === 9) return '★☠';  // +5★ immediate + -5☠ end of hand
+    if (r.rank === 2) return '★▲';
+    if (r.rank === 9) return '★☠';
   }
-  if (r.cat === 'Star') return r.iVP === 10 ? '★+10' : '★';
-  if (r.cat === 'Arrow') return '↑';
+  if (r.cat === 'Star') return '★';
+  if (r.cat === 'Arrow') return '▲';
   if (r.cat === 'Skull') return '☠';
   return '';
 }
@@ -999,7 +1019,7 @@ function humanSeat() {
   return G.players?.find(p => p.type === 'human')?.id ?? 0;
 }
 
-function initGame(playerConfigs, targetVP, cheatJokers, useMA) {
+function initGame(playerConfigs, targetVP, cheatJokers, useMA, difficulty) {
   const numPlayers = playerConfigs.length;
   const players = playerConfigs.map((cfg, i) => ({
     id: i, name: cfg.name, type: cfg.type,
@@ -1017,6 +1037,7 @@ function initGame(playerConfigs, targetVP, cheatJokers, useMA) {
     numSuits: numPlayers <= 4 ? 4 : 6,
     cheatJokers: !!cheatJokers,
     useMA: !!useMA,
+    difficulty: difficulty || 'easy',
     handNum: 0,
     players,
     dealer: 0,
@@ -1027,6 +1048,13 @@ function initGame(playerConfigs, targetVP, cheatJokers, useMA) {
     maAuctionIdx: 0,
     maAuctionPickedSeat: null,
     maEffects: {},
+    // Multi-team state
+    teams: [], // built after partner selection
+    soloSeats: [],
+    hermitActivated: false,
+    preDealMAOrder: [],
+    preDealMAIdx: 0,
+    panTeams: [], // team ids with pan doubling
     auction: { currentBidder:1, passed:[], round:0 },
     trump: { viceChoice:null, chiefChoice:null },
     chiefSeat: null,
@@ -1088,6 +1116,10 @@ function dealCards() {
   G.selectedCards = [];
   G.maEffects = {};
   G.handNum = (G.handNum || 0) + 1;
+  G.teams = [];
+  G.soloSeats = [];
+  G.hermitActivated = false;
+  G.panTeams = [];
 
   // Debug cheat: pull all jokers from AI hands into human bidding tableau
   if (G.cheatJokers) {
@@ -1737,6 +1769,83 @@ function trumpRank(card) {
 // ═══════════════════════════════════════════════
 // PARTNER SELECTION
 // ═══════════════════════════════════════════════
+function scorePartnerStrength(player) {
+  const difficulty = G.difficulty || 'easy';
+  const isHard = difficulty === 'hard';
+
+  // Cards visible: tableau always; hand only on Hard
+  const visibleCards = isHard
+    ? [...player.tableau, ...player.hand].filter(c => !c.isJoker)
+    : player.tableau.filter(c => !c.isJoker);
+
+  const jokers = isHard
+    ? [...player.tableau, ...player.hand].filter(c => c.isJoker)
+    : player.tableau.filter(c => c.isJoker);
+
+  const tds = jokers.filter(c => c.jokerRole === 'TD').length;
+  const tcs = jokers.filter(c => c.jokerRole === 'TC').length;
+
+  // Trump tier per card (using resolved trump)
+  const doubleTrump = visibleCards.filter(c => trumpTierForCard(c) === 3);
+  const highTrump   = visibleCards.filter(c => trumpTierForCard(c) === 2);
+  const lowTrump    = visibleCards.filter(c => trumpTierForCard(c) === 1);
+
+  // Highest double trump rank, highest high trump rank, highest low trump rank
+  const topDouble = doubleTrump.reduce((m, c) => Math.max(m, c.rank), -1);
+  const topHigh   = highTrump.reduce((m, c) => Math.max(m, c.rank), -1);
+  const topLow    = lowTrump.reduce((m, c) => Math.max(m, c.rank), -1);
+
+  // Arrow VP cards (for tiebreak)
+  const arrowCards = visibleCards.filter(c => c.eVP > 0 || c.dualVP);
+  const arrowCount = arrowCards.length;
+
+  return {
+    tds, tcs,
+    doubleTrumpCount: doubleTrump.length, topDouble,
+    highTrumpCount: highTrump.length, topHigh,
+    lowTrumpCount: lowTrump.length, topLow,
+    arrowCount,
+  };
+}
+
+function trumpTierForCard(c) {
+  if (!G.trumpResolved) return 0;
+  if (c.isJoker) return 3;
+  const { vice, chief } = G.trumpResolved;
+  const mv = vice && vice.type !== 'none' &&
+    ((vice.type === 'suit' && c.suit === vice.value) || (vice.type === 'rank' && c.rank === vice.value));
+  const mc = chief && chief.type !== 'none' &&
+    ((chief.type === 'suit' && c.suit === chief.value) || (chief.type === 'rank' && c.rank === chief.value));
+  if (mv && mc) return 3;
+  if (mc) return 2;
+  if (mv) return 1;
+  return 0;
+}
+
+function comparePartners(a, b) {
+  const sa = scorePartnerStrength(a);
+  const sb = scorePartnerStrength(b);
+
+  // 1. Most TDs
+  if (sb.tds !== sa.tds) return sb.tds - sa.tds;
+  // 2. Most TCs
+  if (sb.tcs !== sa.tcs) return sb.tcs - sa.tcs;
+  // 3. Most double trump cards
+  if (sb.doubleTrumpCount !== sa.doubleTrumpCount) return sb.doubleTrumpCount - sa.doubleTrumpCount;
+  // 4. Highest double trump rank
+  if (sb.topDouble !== sa.topDouble) return sb.topDouble - sa.topDouble;
+  // 5. Most high trump cards
+  if (sb.highTrumpCount !== sa.highTrumpCount) return sb.highTrumpCount - sa.highTrumpCount;
+  // 6. Highest high trump rank
+  if (sb.topHigh !== sa.topHigh) return sb.topHigh - sa.topHigh;
+  // 7. Most low trump cards
+  if (sb.lowTrumpCount !== sa.lowTrumpCount) return sb.lowTrumpCount - sa.lowTrumpCount;
+  // 8. Highest low trump rank
+  if (sb.topLow !== sa.topLow) return sb.topLow - sa.topLow;
+  // 9. Most arrow VP cards (tiebreak)
+  return sb.arrowCount - sa.arrowCount;
+}
+
 function startPartnerSelection() {
   G.phase = 'PARTNER_SELECTION';
   const chiefPlayer = G.players.find(p => p.id === G.chiefSeat);
@@ -1748,13 +1857,9 @@ function startPartnerSelection() {
       if (gen !== _generation) return;
       if (G.phase !== 'PARTNER_SELECTION') return;
       const eligible = G.players.filter(p => p.id !== G.chiefSeat && p.id !== G.viceSeat);
-      const best = eligible.reduce((bestId, p) => {
-        const score = p.tableau.reduce((s, c) => s + (c.cat === 'Star' ? 3 : c.cat === 'Arrow' ? 1 : 0), 0);
-        const bestP = G.players.find(pl => pl.id === bestId);
-        const bScore = bestP ? bestP.tableau.reduce((s, c) => s + (c.cat === 'Star' ? 3 : c.cat === 'Arrow' ? 1 : 0), 0) : 0;
-        return score > bScore ? p.id : bestId;
-      }, eligible[0].id);
-      selectPartner(best);
+      if (eligible.length === 0) { startTrickPlay(); render(); return; }
+      const sorted = [...eligible].sort(comparePartners);
+      selectPartner(sorted[0].id);
       render();
     }, 800);
   } else {
@@ -1771,7 +1876,252 @@ function selectPartner(seat) {
   if (partnerPlayer) partnerPlayer.isPartner = true;
   G.partnerSelectPending = false;
   addLog(`${chiefPlayer?.name} picks ${partnerPlayer?.name} as partner.`, true);
-  startTrickPlay();
+
+  // Build initial teams
+  G.teams = [
+    { id: 'chief', seats: [G.chiefSeat, seat].filter(s => s !== null && s !== undefined), panDoubled: false },
+    { id: 'vice',  seats: G.players.map(p => p.id).filter(id => id !== G.chiefSeat && id !== seat), panDoubled: false },
+  ];
+  G.soloSeats = [];
+  G.hermitActivated = false;
+  G.panTeams = [];
+
+  if (G.useMA && hasPreDealMACards()) {
+    startPreDealMAPhase();
+  } else {
+    startTrickPlay();
+  }
+}
+
+function hasPreDealMACards() {
+  return G.players.some(p => (p.arcana || []).some(c => c.timing === 'PreDeal'));
+}
+
+function startPreDealMAPhase() {
+  G.phase = 'PREDEAL_MA';
+  // Activation order: ascending VP, random tiebreak, all players
+  G.preDealMAOrder = [...G.players]
+    .sort((a, b) => (a.vpTotal - b.vpTotal) || (Math.random() - 0.5))
+    .map(p => p.id);
+  G.preDealMAIdx = 0;
+  addLog('✦ Pre-Deal Major Arcana phase begins.', true);
+  advancePreDealMA();
+}
+
+function advancePreDealMA() {
+  // Skip players with no Pre-Deal MA cards or if Hermit activated
+  while (G.preDealMAIdx < G.preDealMAOrder.length) {
+    const seat = G.preDealMAOrder[G.preDealMAIdx];
+    const player = G.players.find(p => p.id === seat);
+    const hasPreDeal = (player?.arcana || []).some(c => c.timing === 'PreDeal');
+    if (hasPreDeal && !G.hermitActivated) break;
+    G.preDealMAIdx++;
+  }
+
+  if (G.preDealMAIdx >= G.preDealMAOrder.length || G.hermitActivated) {
+    // Assign any unassigned players to solo if Hermit was activated
+    if (G.hermitActivated) assignSoloPlayers();
+    addLog('✦ Pre-Deal MA phase complete.', true);
+    startTrickPlay();
+    render();
+    return;
+  }
+
+  const seat = G.preDealMAOrder[G.preDealMAIdx];
+  const player = G.players.find(p => p.id === seat);
+
+  if (player.type === 'AI') {
+    const gen = _generation;
+    setTimeout(() => {
+      if (gen !== _generation) return;
+      aiPreDealMA(seat);
+    }, 800);
+  } else {
+    showPreDealMAChoice(seat);
+  }
+}
+
+function assignSoloPlayers() {
+  // Any player not on any team becomes solo
+  const assignedSeats = G.teams.flatMap(t => t.seats);
+  G.soloSeats = G.players.map(p => p.id).filter(id => !assignedSeats.includes(id));
+  for (const id of G.soloSeats) {
+    addLog(`${G.players.find(p => p.id === id)?.name} plays Solo.`, true);
+  }
+}
+
+function getPlayerTeam(seatId) {
+  return G.teams.find(t => t.seats.includes(seatId)) || null;
+}
+
+function aiPreDealMA(seat) {
+  if (G.phase !== 'PREDEAL_MA') return;
+  const player = G.players.find(p => p.id === seat);
+  const preDealCards = (player?.arcana || []).filter(c => c.timing === 'PreDeal');
+  if (preDealCards.length === 0 || G.hermitActivated) {
+    G.preDealMAIdx++;
+    advancePreDealMA();
+    render();
+    return;
+  }
+
+  // AI strategy: always skip Pre-Deal MA on Easy/Medium; use on Hard if beneficial
+  if (G.difficulty !== 'hard') {
+    G.preDealMAIdx++;
+    advancePreDealMA();
+    render();
+    return;
+  }
+
+  // Hard AI: use Lovers to invite the strongest available player
+  const loversCard = preDealCards.find(c => c.maId === 'Lovers');
+  if (loversCard) {
+    const myTeam = getPlayerTeam(seat);
+    const eligible = G.players.filter(p => p.id !== G.chiefSeat && p.id !== G.viceSeat && p.id !== seat);
+    if (eligible.length > 0) {
+      const target = [...eligible].sort(comparePartners)[0];
+      activatePreDealMA(seat, loversCard, target.id);
+      return;
+    }
+  }
+
+  G.preDealMAIdx++;
+  advancePreDealMA();
+  render();
+}
+
+function showPreDealMAChoice(seat) {
+  const player = G.players.find(p => p.id === seat);
+  const preDealCards = (player?.arcana || []).filter(c => c.timing === 'PreDeal');
+
+  G.awaitingHumanAction = true;
+
+  showModal(
+    `${player.name} — Pre-Deal Major`,
+    `You may activate one Pre-Deal Major Arcana card, or skip.`,
+    [],
+    [
+      ...preDealCards.map(card => ({
+        label: `✦ ${card.label}`,
+        fn: () => {
+          closeModal();
+          if (card.maId === 'Hermit') {
+            activatePreDealMA(seat, card, null);
+          } else {
+            // Show target selection
+            showPreDealMATargetChoice(seat, card);
+          }
+        }
+      })),
+      { label: 'Skip', fn: () => {
+        closeModal();
+        G.awaitingHumanAction = false;
+        G.preDealMAIdx++;
+        advancePreDealMA();
+        render();
+      }},
+    ]
+  );
+  render();
+}
+
+function showPreDealMATargetChoice(seat, card) {
+  const eligible = G.players.filter(p => p.id !== G.chiefSeat && p.id !== G.viceSeat && p.id !== seat);
+  showModal(
+    `${card.label} — Choose a Player`,
+    card.desc,
+    [],
+    [
+      ...eligible.map(p => ({
+        label: p.name,
+        fn: () => { closeModal(); activatePreDealMA(seat, card, p.id); }
+      })),
+      { label: 'Cancel', fn: () => { closeModal(); showPreDealMAChoice(seat); } },
+    ]
+  );
+}
+
+function activatePreDealMA(activatorSeat, card, targetSeat) {
+  const activator = G.players.find(p => p.id === activatorSeat);
+
+  // Remove card from arcana, return to discard
+  activator.arcana = activator.arcana.filter(c => c.id !== card.id);
+  G.maDiscard.push(card);
+  G.awaitingHumanAction = false;
+
+  if (card.maId === 'Hermit') {
+    G.hermitActivated = true;
+    addLog(`${activator.name} activates The Hermit — no further team assignments!`, true);
+    G.preDealMAIdx++;
+    advancePreDealMA();
+    render();
+    return;
+  }
+
+  const target = G.players.find(p => p.id === targetSeat);
+  if (!target) { G.preDealMAIdx++; advancePreDealMA(); render(); return; }
+
+  // Determine which team the activator belongs to
+  if (activatorSeat === G.chiefSeat) {
+    // Chief: add target to Chief's team
+    const chiefTeam = G.teams.find(t => t.id === 'chief');
+    if (chiefTeam && !chiefTeam.seats.includes(targetSeat)) {
+      chiefTeam.seats.push(targetSeat);
+      target.isPartner = true;
+      // Remove from vice team if there
+      const viceTeam = G.teams.find(t => t.id === 'vice');
+      if (viceTeam) viceTeam.seats = viceTeam.seats.filter(s => s !== targetSeat);
+    }
+    if (card.maId === 'Pan') {
+      const chiefTeam = G.teams.find(t => t.id === 'chief');
+      if (chiefTeam) chiefTeam.panDoubled = true;
+      G.panTeams.push('chief');
+      addLog(`${activator.name} activates Pan — Chief's team Arrow VP doubled if goal met!`, true);
+    } else {
+      addLog(`${activator.name} invites ${target.name} to join Chief's team!`, true);
+    }
+  } else if (activatorSeat === G.viceSeat) {
+    // Vice: add target to Vice's team
+    const viceTeam = G.teams.find(t => t.id === 'vice');
+    if (viceTeam && !viceTeam.seats.includes(targetSeat)) {
+      viceTeam.seats.push(targetSeat);
+      // Remove from alternates if there
+      const altTeam = G.teams.find(t => t.id === 'alternates');
+      if (altTeam) altTeam.seats = altTeam.seats.filter(s => s !== targetSeat);
+    }
+    if (card.maId === 'Pan') {
+      const viceTeam = G.teams.find(t => t.id === 'vice');
+      if (viceTeam) viceTeam.panDoubled = true;
+      G.panTeams.push('vice');
+      addLog(`${activator.name} activates Pan — Vice's team Arrow VP doubled if Chief fails!`, true);
+    } else {
+      addLog(`${activator.name} invites ${target.name} to join Vice's team!`, true);
+    }
+  } else {
+    // Third-party: form or join Alternates team
+    let altTeam = G.teams.find(t => t.id === 'alternates');
+    if (!altTeam) {
+      altTeam = { id: 'alternates', seats: [], panDoubled: false };
+      G.teams.push(altTeam);
+    }
+    // Move activator and target to alternates (remove from vice team)
+    const viceTeam = G.teams.find(t => t.id === 'vice');
+    for (const sid of [activatorSeat, targetSeat]) {
+      if (!altTeam.seats.includes(sid)) altTeam.seats.push(sid);
+      if (viceTeam) viceTeam.seats = viceTeam.seats.filter(s => s !== sid);
+    }
+    if (card.maId === 'Pan') {
+      altTeam.panDoubled = true;
+      G.panTeams.push('alternates');
+      addLog(`${activator.name} activates Pan — Alternates team Arrow VP doubled if Chief fails!`, true);
+    } else {
+      addLog(`${activator.name} & ${target.name} form the Alternates team!`, true);
+    }
+  }
+
+  G.preDealMAIdx++;
+  advancePreDealMA();
+  render();
 }
 
 // ═══════════════════════════════════════════════
@@ -1780,6 +2130,17 @@ function selectPartner(seat) {
 function startTrickPlay() {
   G.phase = 'TRICK_PLAY';
   G.trickNum = 0;
+
+  // Build teams if not already set (e.g. 3P game — no partner selection)
+  if (G.teams.length === 0) {
+    const chiefTeamSeats = [G.chiefSeat, G.partnerSeat].filter(s => s !== null && s !== undefined);
+    const viceTeamSeats = G.players.map(p => p.id).filter(id => !chiefTeamSeats.includes(id));
+    G.teams = [
+      { id: 'chief', seats: chiefTeamSeats, panDoubled: false },
+      { id: 'vice',  seats: viceTeamSeats,  panDoubled: false },
+    ];
+  }
+
   addLog('Trick play begins. Chief leads.', true);
   startNewTrick(G.chiefSeat);
   render();
@@ -1928,7 +2289,7 @@ function playRound1Card(seat, card) {
     player.handVP += starVP;
     player.starsPlayed = (player.starsPlayed || 0) + starVP;
     if (card.dualVP) {
-      const suffix = card.eVP > 0 ? ` +${card.eVP}↑ (end of hand)` : ` ${card.eVP}☠ (end of hand)`;
+      const suffix = card.eVP > 0 ? ` +${card.eVP}▲ (end of hand)` : ` ${card.eVP}☠ (end of hand)`;
       addLog(`${player.name} plays ${card.face} of ${card.suit} — +${starVP}★${suffix}`);
     } else {
       addLog(`${player.name} plays ${card.face} of ${card.suit} — +${starVP}★`);
@@ -2055,8 +2416,11 @@ function aiPlayRound1(seat) {
 
   // Off-suit discard — determine if current trick winner is teammate or opponent
   const isTeammate = (s) => {
+    if (G.teams.length > 0) {
+      const myTeam = G.teams.find(t => t.seats.includes(seat));
+      return myTeam ? myTeam.seats.includes(s) : false;
+    }
     if (G.partnerSeat !== null) {
-      // Team play: chief+partner vs vice+others
       const myTeam = seat === G.chiefSeat || seat === G.partnerSeat;
       const theirTeam = s === G.chiefSeat || s === G.partnerSeat;
       return myTeam === theirTeam;
@@ -2084,17 +2448,30 @@ function aiPlayRound1(seat) {
 
   let chosen;
   if (!winnerIsTeammate) {
-    // Opponent winning — dump Skulls on them, then Arrows (don't give away Stars)
+    // Opponent winning — dump Skulls on them first, then Neutrals (no VP value).
+    // Only surrender an Arrow as a last resort (avoid feeding opponent Arrow VP), never give away Stars.
     chosen = skulls.sort((a,b) => b.rank - a.rank)[0]
-          || arrows.sort((a,b) => b.rank - a.rank)[0]
           || neutral.sort((a,b) => a.rank - b.rank)[0]
+          || arrows.sort((a,b) => a.rank - b.rank)[0]
           || stars.sort((a,b) => a.rank - b.rank)[0];
   } else {
-    // Teammate winning — give them Arrows, avoid dumping Skulls on them
-    chosen = arrows.sort((a,b) => b.rank - a.rank)[0]
-          || neutral.sort((a,b) => a.rank - b.rank)[0]
-          || stars.sort((a,b) => a.rank - b.rank)[0]
-          || skulls.sort((a,b) => a.rank - b.rank)[0];
+    // Teammate winning
+    if (G.difficulty === 'hard' && skulls.length > 0) {
+      // Hard: play skull on teammate's winning trick IF skull card won't cause AI to win the trick
+      // Check: would playing the skull card win the trick?
+      const skullCandidate = skulls.sort((a,b) => a.rank - b.rank)[0]; // lowest skull
+      const wouldWin = beatsCard(skullCandidate, winCard, ledCard);
+      if (!wouldWin) {
+        chosen = skullCandidate;
+      }
+    }
+    if (!chosen) {
+      // Give arrows to teammate, avoid skulls
+      chosen = arrows.sort((a,b) => b.rank - a.rank)[0]
+            || neutral.sort((a,b) => a.rank - b.rank)[0]
+            || stars.sort((a,b) => a.rank - b.rank)[0]
+            || skulls.sort((a,b) => a.rank - b.rank)[0];
+    }
   }
 
   chosen = chosen || legal.sort((a,b) => a.rank - b.rank)[0];
@@ -2431,7 +2808,7 @@ function scoreHand() {
 
   const chiefPlayer = G.players.find(p => p.id === chiefSeat);
   const bidCount = Math.min(G.auction.chiefBidCount || chiefPlayer?.tableau.length || 1, 6);
-  const goalRow = GOAL_TABLE[Math.max(1, Math.min(bidCount, 6))];
+  const goalRow = (G.numPlayers >= 5 ? GOAL_TABLE_5P : GOAL_TABLE)[Math.max(1, Math.min(bidCount, 6))];
 
   // Tally each player's individual Arrow VP and Skull VP from captured tricks
   const arrowVP = {}; // Arrow VP captured per player
@@ -2461,28 +2838,59 @@ function scoreHand() {
     p.handVP += personal;
   }
 
-  // Chief's team seats
-  const chiefTeamSeats = [chiefSeat, partnerSeat].filter(s => s !== null && s !== undefined);
-  const viceTeamSeats = G.players.map(p => p.id).filter(id => !chiefTeamSeats.includes(id));
+  // Use G.teams if available, otherwise build standard structure
+  // For 3P games partnerSeat is null — all non-Chief players are on Vice team
+  if (G.teams.length === 0) {
+    const chiefTeamSeatsDefault = [chiefSeat, partnerSeat].filter(s => s !== null && s !== undefined);
+    const viceTeamSeatsDefault = G.players.map(p => p.id).filter(id => !chiefTeamSeatsDefault.includes(id));
+    G.teams = [
+      { id: 'chief', seats: chiefTeamSeatsDefault, panDoubled: false },
+      { id: 'vice',  seats: viceTeamSeatsDefault,  panDoubled: false },
+    ];
+  }
+  const teams = G.teams;
 
-  // Goal tally = sum of Arrow VP captured by Chief + Partner
+  // Chief's team seats for goal tally
+  const chiefTeam = teams.find(t => t.id === 'chief');
+  const chiefTeamSeats = chiefTeam?.seats || [chiefSeat, partnerSeat].filter(Boolean);
+
+  // Goal tally = sum of Arrow VP captured by Chief's team
   const teamArrowTally = chiefTeamSeats.reduce((sum, seat) => sum + (arrowVP[seat] || 0), 0);
   const goal = goalRow.goal;
   const goalMet = teamArrowTally >= goal;
 
-  // Arrow VP distribution — only one team earns their combined Arrow VP
-  const arrowWinners = goalMet ? chiefTeamSeats : viceTeamSeats;
-  const totalArrowVP = arrowWinners.reduce((sum, seat) => sum + (arrowVP[seat] || 0), 0);
-
-  for (const seat of arrowWinners) {
-    const p = G.players.find(pl => pl.id === seat);
-    if (p) {
-      p.vpTotal += totalArrowVP;
-      p.handVP += totalArrowVP;
+  // Arrow VP distribution — multi-team
+  const teamResults = [];
+  if (goalMet) {
+    // Chief's team scores; others score nothing
+    const chiefArrows = chiefTeamSeats.reduce((s, id) => s + (arrowVP[id] || 0), 0);
+    const award = chiefTeam?.panDoubled ? chiefArrows * 2 : chiefArrows;
+    for (const seat of chiefTeamSeats) {
+      const p = G.players.find(pl => pl.id === seat);
+      if (p) { p.vpTotal += award; p.handVP += award; }
+    }
+    teamResults.push({ teamId: 'chief', seats: chiefTeamSeats, award, panDoubled: chiefTeam?.panDoubled });
+  } else {
+    // Chief fails — all other teams score their own combined arrows; solo players score nothing
+    for (const team of teams) {
+      if (team.id === 'chief') continue;
+      const nonSoloSeats = team.seats.filter(id => !G.soloSeats.includes(id));
+      if (nonSoloSeats.length === 0) continue;
+      const teamArrows = nonSoloSeats.reduce((s, id) => s + (arrowVP[id] || 0), 0);
+      const award = team.panDoubled ? teamArrows * 2 : teamArrows;
+      for (const seat of nonSoloSeats) {
+        const p = G.players.find(pl => pl.id === seat);
+        if (p) { p.vpTotal += award; p.handVP += award; }
+      }
+      teamResults.push({ teamId: team.id, seats: nonSoloSeats, award, panDoubled: team.panDoubled });
     }
   }
 
-  showScoringModal({ teamArrowTally, goal, goalMet, endVP, arrowVP, skullVP, arrowWinners, totalArrowVP, bidCount });
+  // Flatten arrowWinners for scoring modal
+  const arrowWinners = teamResults.flatMap(t => t.seats);
+  const totalArrowVP = teamResults.length > 0 ? teamResults[0].award : 0;
+
+  showScoringModal({ teamArrowTally, goal, goalMet, endVP, arrowVP, skullVP, arrowWinners, totalArrowVP, bidCount, teamResults, teams });
 }
 
 function showScoringModal(s) {
@@ -2493,24 +2901,30 @@ function showScoringModal(s) {
   const roleName = (p) => {
     if (p.id === chiefSeat) return 'Chief';
     if (p.id === viceSeat) return 'Vice';
-    if (p.id === partnerSeat) return 'Partner';
+    if (G.soloSeats?.includes(p.id)) return 'Solo';
+    // Find team
+    const team = (s.teams || []).find(t => t.seats.includes(p.id));
+    if (team?.id === 'chief') return 'Partner';
+    if (team?.id === 'alternates') return 'Alt';
     return 'VPartner';
   };
 
   let html = `<table class="scoring-table">
-    <tr><th>Player</th><th>Role</th><th>★ Played</th><th>↑ Captured</th><th>☠ Penalty</th><th>Total</th></tr>`;
+    <tr><th>Player</th><th>Role</th><th>★ Played</th><th>▲ Award</th><th>☠ Penalty</th><th>Total</th></tr>`;
 
   for (const p of G.players) {
     const role = roleName(p);
     const stars = p.starsPlayed || 0;
     const arrows = s.arrowVP[p.id] || 0;
-    const skulls = s.skullVP[p.id] || 0; // negative
+    const skulls = s.skullVP[p.id] || 0;
     const isWinner = s.arrowWinners.includes(p.id);
+    const teamResult = (s.teamResults || []).find(t => t.seats.includes(p.id));
+    const award = teamResult ? teamResult.award : 0;
     html += `<tr>
       <td>${p.name}${isWinner ? ' ✓' : ''}</td>
-      <td class="${role === 'Chief' ? 'gold' : role === 'Vice' ? 'red' : ''}">${role}</td>
+      <td class="${role === 'Chief' ? 'gold' : role === 'Vice' ? 'red' : role === 'Solo' ? 'dim' : ''}">${role}</td>
       <td class="positive">${stars > 0 ? '+' + stars : '—'}</td>
-      <td class="${isWinner ? 'positive' : 'dim'}">${isWinner ? '+' + s.totalArrowVP : '—'}</td>
+      <td class="${isWinner ? 'positive' : 'dim'}">${isWinner ? '+' + award : '—'}${teamResult?.panDoubled ? ' ×2🃏' : ''}</td>
       <td class="${skulls < 0 ? 'negative' : 'dim'}">${skulls < 0 ? skulls : '—'}</td>
       <td>${p.vpTotal}</td>
     </tr>`;
@@ -2518,15 +2932,19 @@ function showScoringModal(s) {
 
   html += `</table>
   <hr class="divider">
-  <div style="font-size:0.85rem;color:var(--text-dim);margin-bottom:4px;">Goal: Chief's team ↑ Arrows captured ≥ ${s.goal}</div>
+  <div style="font-size:0.85rem;color:var(--text-dim);margin-bottom:4px;">Goal: Chief's team ▲ captured ≥ ${s.goal}</div>
   <div style="font-size:0.9rem;margin-bottom:6px;">
-    Chief's team captured: <span class="${s.goalMet ? 'green' : 'red'}">${s.teamArrowTally}↑</span> / goal: <span class="gold">${s.goal}↑</span>
+    Chief's team: <span class="${s.goalMet ? 'green' : 'red'}">${s.teamArrowTally}▲</span> / goal: <span class="gold">${s.goal}▲</span>
   </div>`;
 
   if (s.goalMet) {
-    html += `<div class="mt8 positive">✓ Chief's team met the goal — Chief's team scores <strong>+${s.totalArrowVP}↑</strong> each.</div>`;
+    html += `<div class="mt8 positive">✓ Chief's team met the goal — scores their combined ▲.</div>`;
   } else {
-    html += `<div class="mt8 red">✗ Chief's team missed the goal — Vice's team scores <strong>+${s.totalArrowVP}↑</strong> each.</div>`;
+    html += `<div class="mt8 red">✗ Chief's team missed — other teams score their own ▲.</div>`;
+    if (G.soloSeats?.length > 0) {
+      const soloNames = G.soloSeats.map(id => G.players.find(p => p.id === id)?.name).join(', ');
+      html += `<div class="mt8 dim">Solo players (no ▲): ${soloNames}</div>`;
+    }
   }
 
   const winner = G.players.find(p => p.vpTotal >= G.targetVP);
@@ -2577,7 +2995,7 @@ function render() {
 }
 
 function renderHeader() {
-  const label = { MA_AUCTION:'✦ Arcana Auction', AUCTION:'Auction', TRUMP_SELECTION:'Trump Selection', PARTNER_SELECTION:'Partner Selection', TRICK_PLAY:`Trick ${G.trickNum}`, SCORING:'Scoring' };
+  const label = { MA_AUCTION:'✦ Arcana Auction', AUCTION:'Auction', TRUMP_SELECTION:'Trump Selection', PARTNER_SELECTION:'Partner Selection', PREDEAL_MA:'✦ Pre-Deal Majors', TRICK_PLAY:`Trick ${G.trickNum}`, SCORING:'Scoring' };
   document.getElementById('phase-label').textContent = label[G.phase] || G.phase;
 
   const vp = document.getElementById('vp-scoreboard');
@@ -2688,16 +3106,16 @@ function renderCenter() {
     trumpDisplay.innerHTML = '';
     const vc = G.trump.viceChoice;
     const cc = G.trump.chiefChoice;
-    if (vc) {
-      const b = document.createElement('div');
-      b.className = 'trump-badge minor';
-      b.textContent = `Minor: ${vc.type === 'none' ? 'None' : vc.label}`;
-      trumpDisplay.appendChild(b);
-    }
     if (cc) {
       const b = document.createElement('div');
       b.className = 'trump-badge major';
       b.textContent = `Major: ${cc.type === 'none' ? 'None' : cc.label}`;
+      trumpDisplay.appendChild(b);
+    }
+    if (vc) {
+      const b = document.createElement('div');
+      b.className = 'trump-badge minor';
+      b.textContent = `Minor: ${vc.type === 'none' ? 'None' : vc.label}`;
       trumpDisplay.appendChild(b);
     }
 
@@ -2780,8 +3198,11 @@ function cardSortFn(a, b) {
   const tb = trumpTier(b);
 
   if (ta !== tb) return tb - ta;
-  if (a.rank !== b.rank) return a.rank - b.rank; // ascending within each tier
-  return a.suit.localeCompare(b.suit);
+  // Within trump tiers: rank descending
+  if (ta > 0) return b.rank - a.rank;
+  // Non-trump: group by suit alphabetically, then rank descending within suit
+  if (a.suit !== b.suit) return a.suit.localeCompare(b.suit);
+  return b.rank - a.rank;
 }
 
 function renderPlayerArea() {
@@ -3016,6 +3437,20 @@ function toggleSelect(card) {
   else G.selectedCards.push(card);
 }
 
+function faceVPText(card) {
+  if (card.isJoker) {
+    return card.jokerRole === 'TD' ? '+5' : '+5\u00A0-5';
+  }
+  if (card.dualVP) {
+    return card.rank === 2 ? '+5\u00A0+5' : '+5\u00A0-5';
+  }
+  if (card.dualArrow) return '+5\u00A0+5';
+  if (card.iVP > 0) return `+${card.iVP}`;
+  if (card.eVP > 0) return `+${card.eVP}`;
+  if (card.eVP < 0) return `${card.eVP}`;
+  return '';
+}
+
 // ═══════════════════════════════════════════════
 // CARD RENDERING
 // ═══════════════════════════════════════════════
@@ -3066,7 +3501,7 @@ function makeCard(card, selected, inTrick) {
 
   const faceVP = document.createElement('div');
   faceVP.className = 'face-vp';
-  faceVP.textContent = card.vpLabel || '';
+  faceVP.textContent = faceVPText(card);
   faceVP.style.color = card.isJoker ? (card.jokerRole === 'TD' ? '#f1c40f' : '#e74c3c') : suit.text;
 
   face.appendChild(faceRank);
@@ -3091,7 +3526,11 @@ function makeMiniCard(card) {
     el.style.background = suit.color;
     el.style.color = '#fff';
   }
-  el.innerHTML = `<span>${card.strip}</span><span>${suit.icon}</span>`;
+  el.innerHTML = `
+    <span style="font-size:0.65rem;line-height:1;align-self:center;">${card.strip}</span>
+    <span style="font-size:0.85rem;line-height:1;">${suit.icon}</span>
+    <span style="font-size:0.5rem;opacity:0;"> </span>
+  `;
   return el;
 }
 
@@ -3142,6 +3581,15 @@ function addLog(msg, important) {
 // ═══════════════════════════════════════════════
 let setupPlayerCount = 4;
 let setupTarget = 300;
+let setupDifficulty = 'easy';
+
+document.querySelectorAll('#difficulty-btns .count-btn').forEach(btn => {
+  btn.onclick = () => {
+    document.querySelectorAll('#difficulty-btns .count-btn').forEach(b => b.classList.remove('selected'));
+    btn.classList.add('selected');
+    setupDifficulty = btn.dataset.d;
+  };
+});
 const aiNames = ['Aria','Blaze','Coda','Dusk','Echo','Fern'];
 let playerSlotTypes = []; // 'human' or 'AI' per slot index 1..n-1
 
@@ -3225,7 +3673,7 @@ document.getElementById('start-btn').onclick = () => {
 
   document.getElementById('screen-setup').classList.remove('active');
   document.getElementById('screen-game').classList.add('active');
-  initGame(playerConfigs, setupTarget, cheatJokers, useMA);
+  initGame(playerConfigs, setupTarget, cheatJokers, useMA, setupDifficulty);
 };
 
 function showSetup() {
