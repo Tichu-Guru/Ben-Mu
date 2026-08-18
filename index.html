@@ -873,10 +873,10 @@ const RANKS = [
   { rank:2,  name:'2',      face:'2',  strip:'2',  count:1, cat:'Star',    iVP:5,  eVP:5,  pen:0,  dualVP:true },
   { rank:3,  name:'3',      face:'3',  strip:'3',  count:1, cat:'Arrow',   iVP:0,  eVP:5,  pen:0  },
   { rank:4,  name:'4',      face:'4',  strip:'4',  count:1, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
-  { rank:5,  name:'5',      face:'5',  strip:'5',  count:3, cat:'Arrow',   iVP:0,  eVP:10, pen:0,  dualArrow:true },
+  { rank:5,  name:'5',      face:'5',  strip:'5',  count:3, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
   { rank:6,  name:'6',      face:'6',  strip:'6',  count:1, cat:'Arrow',   iVP:0,  eVP:5,  pen:0  },
   { rank:7,  name:'7',      face:'7',  strip:'7',  count:1, cat:'Skull',   iVP:0,  eVP:-5, pen:-5 },
-  { rank:8,  name:'8',      face:'8',  strip:'8',  count:3, cat:'Arrow',   iVP:0,  eVP:5,  pen:0  },
+  { rank:8,  name:'8',      face:'8',  strip:'8',  count:3, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
   { rank:9,  name:'9',      face:'9',  strip:'9',  count:1, cat:'Star',    iVP:5,  eVP:-5, pen:0,  dualVP:true },
   { rank:10, name:'10',     face:'10', strip:'10', count:1, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
   { rank:11, name:'Page',   face:'Pg', strip:'11', count:2, cat:'Star',    iVP:5,  eVP:0,  pen:0  },
@@ -886,21 +886,21 @@ const RANKS = [
 ];
 
 const GOAL_TABLE = {
-  1: { goal:75 },
-  2: { goal:100 },
-  3: { goal:125 },
-  4: { goal:150 },
-  5: { goal:165 },
-  6: { goal:175 },
+  1: { goal:30 },
+  2: { goal:40 },
+  3: { goal:50 },
+  4: { goal:60 },
+  5: { goal:65 },
+  6: { goal:70 },
 };
 
 const GOAL_TABLE_5P = {
-  1: { goal:145 },
-  2: { goal:195 },
-  3: { goal:245 },
-  4: { goal:295 },
-  5: { goal:325 },
-  6: { goal:340 },
+  1: { goal:45 },
+  2: { goal:60 },
+  3: { goal:75 },
+  4: { goal:90 },
+  5: { goal:100 },
+  6: { goal:105 },
 };
 
 function buildDeck(usedSuits, rankFilter) {
@@ -929,7 +929,6 @@ function buildDeck(usedSuits, rankFilter) {
           eVP: r.eVP,
           pen: r.pen,
           dualVP: r.dualVP || false,
-          dualArrow: r.dualArrow || false,
           isJoker: false,
           jokerRole: null,
           vpLabel: vpLabel(r),
@@ -966,7 +965,6 @@ function buildDeck(usedSuits, rankFilter) {
 }
 
 function vpLabel(r) {
-  if (r.dualArrow) return '▲▲';
   if (r.dualVP) {
     if (r.rank === 2) return '★▲';
     if (r.rank === 9) return '★☠';
@@ -2448,11 +2446,10 @@ function aiPlayRound1(seat) {
 
   let chosen;
   if (!winnerIsTeammate) {
-    // Opponent winning — dump Skulls on them first, then Neutrals (no VP value).
-    // Only surrender an Arrow as a last resort (avoid feeding opponent Arrow VP), never give away Stars.
+    // Opponent winning — dump Skulls on them, then Arrows (don't give away Stars)
     chosen = skulls.sort((a,b) => b.rank - a.rank)[0]
+          || arrows.sort((a,b) => b.rank - a.rank)[0]
           || neutral.sort((a,b) => a.rank - b.rank)[0]
-          || arrows.sort((a,b) => a.rank - b.rank)[0]
           || stars.sort((a,b) => a.rank - b.rank)[0];
   } else {
     // Teammate winning
@@ -3444,7 +3441,6 @@ function faceVPText(card) {
   if (card.dualVP) {
     return card.rank === 2 ? '+5\u00A0+5' : '+5\u00A0-5';
   }
-  if (card.dualArrow) return '+5\u00A0+5';
   if (card.iVP > 0) return `+${card.iVP}`;
   if (card.eVP > 0) return `+${card.eVP}`;
   if (card.eVP < 0) return `${card.eVP}`;
