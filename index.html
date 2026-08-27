@@ -5,6 +5,38 @@
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
 <title>Ben Mü</title>
 <link href="https://fonts.googleapis.com/css2?family=Cinzel+Decorative:wght@400;700&family=Crimson+Pro:ital,wght@0,300;0,400;0,600;1,300;1,400&display=swap" rel="stylesheet">
+<script>
+/* PeerJS loader — tries three CDNs in order (jsDelivr → unpkg → cdnjs); retryable on demand */
+(function(){
+const PEER_CDNS = [
+'https://cdn.jsdelivr.net/npm/peerjs@1.5.5/dist/peerjs.min.js',
+'https://unpkg.com/peerjs@1.5.5/dist/peerjs.min.js',
+'https://cdnjs.cloudflare.com/ajax/libs/peerjs/1.5.5/peerjs.min.js'
+];
+let idx = 0;
+window._peerLoadState = 'loading';
+function tryLoad(){
+if (idx >= PEER_CDNS.length){ window._peerLoadState = 'failed'; return; }
+const s = document.createElement('script');
+s.src = PEER_CDNS[idx++];
+s.onload = ()=>{ window._peerLoadState = 'ready'; };
+s.onerror = ()=>{ s.remove(); tryLoad(); };
+document.head.appendChild(s);
+}
+window._peerRetryLoad = function(cb){
+if (typeof Peer !== 'undefined'){ if(cb) cb(true); return; }
+idx = 0; window._peerLoadState = 'loading';
+tryLoad();
+const t0 = Date.now();
+(function poll(){
+if (typeof Peer !== 'undefined'){ if(cb) cb(true); return; }
+if (window._peerLoadState==='failed' || Date.now()-t0 > 12000){ if(cb) cb(false); return; }
+setTimeout(poll, 300);
+})();
+};
+tryLoad();
+})();
+</script>
 <style>
 :root {
   --bg: #f0eee8;
@@ -157,6 +189,50 @@ body {
 }
 .btn-primary:hover { filter: brightness(1.1); transform: translateY(-1px); }
 .btn-primary:active { transform: translateY(0); }
+
+/* ── ONLINE MULTIPLAYER UI ── */
+.net-status { font-size: 0.85rem; color: var(--cream-dim); margin-top: 8px; line-height: 1.4; }
+.net-status.ok { color: #6acc8a; }
+.net-status.err { color: #cc6a6a; }
+.net-room-code {
+  display: none;
+  font-family: 'Cinzel Decorative', serif;
+  font-size: 2rem;
+  letter-spacing: 0.2em;
+  color: var(--gold);
+  text-align: center;
+  margin: 10px 0;
+  padding: 12px;
+  background: var(--surface2);
+  border: 1px solid var(--gold-dim);
+  border-radius: 8px;
+}
+.net-lobby-list { display: flex; flex-direction: column; gap: 6px; margin: 10px 0; }
+.net-lobby-row {
+  display: flex; align-items: center; gap: 10px;
+  background: var(--surface2); border: 1px solid var(--border);
+  border-radius: 6px; padding: 8px 12px; font-size: 0.9rem;
+}
+.net-lobby-row.me { border-color: var(--gold-dim); }
+.net-lobby-row.open-seat { opacity: 0.6; }
+.net-lobby-row .seat-num { color: var(--cream-dim); width: 20px; }
+.net-lobby-row .who { flex: 1; color: var(--cream); }
+.net-lobby-row .tag { font-size: 0.75rem; color: var(--cream-dim); }
+.net-seat-move { background: none; border: none; color: var(--gold-dim); cursor: pointer; font-size: 1rem; padding: 2px 6px; }
+body.net-client #screen-setup, body.net-client .setup-card { }
+#online-wait-screen {
+  display: none; position: fixed; inset: 0; z-index: 900; background: var(--bg);
+  flex-direction: column; align-items: center; justify-content: center; gap: 16px; padding: 20px;
+}
+#online-wait-screen.open { display: flex; }
+#net-spectate-banner {
+  position: fixed; top: 0; left: 0; right: 0; z-index: 850;
+  background: var(--surface3); color: var(--gold); text-align: center;
+  font-size: 0.8rem; padding: 6px; letter-spacing: 0.04em;
+}
+body.net-client #net-spectate-banner { display: block; }
+#net-spectate-banner { display: none; }
+body.net-myturn #net-spectate-banner { background: linear-gradient(135deg, #5a3a08, #8a5a14, #5a3a08); }
 
 /* ── GAME SCREEN ── */
 #screen-game {
@@ -654,18 +730,46 @@ body {
     <h2>New Game</h2>
     <div class="form-group">
       <label>Your Name</label>
-      <input type="text" id="player-name-input" value="Ben" maxlength="16">
+      <input type="text" id="player-name-input" value="Ben" maxlength="16" oninput="if(NET.mode==='host'){netRenderHostLobby();netBroadcastLobby();}">
     </div>
-    <div class="form-group">
+
+    <div class="form-group" id="section-gamemode">
+      <label>Game Mode</label>
+      <div class="player-count-group">
+        <button class="count-btn selected" id="mode-local-btn" onclick="setGameMode('local')">Local (Hotseat)</button>
+        <button class="count-btn" id="mode-host-btn" onclick="setGameMode('host')">Host Online</button>
+        <button class="count-btn" id="mode-join-btn" onclick="setGameMode('join')">Join Online</button>
+      </div>
+    </div>
+
+    <div class="form-group" id="section-host-lobby" style="display:none;">
+      <label>Room Code — share with your friends</label>
+      <div id="net-status-host" class="net-status"></div>
+      <div class="net-room-code" id="host-room-code"></div>
+      <div class="net-status" id="host-start-hint" style="display:none;">Friends join with the code above. Open seats become AI if unfilled.</div>
+      <div class="net-lobby-list" id="host-lobby-list"></div>
+    </div>
+
+    <div class="form-group" id="section-join" style="display:none;">
+      <label>Room Code</label>
+      <input type="text" id="join-code-input" maxlength="4" placeholder="ABCD" style="text-transform:uppercase;">
+      <button class="btn-primary" style="margin-top:10px;" onclick="joinRoom()">Join Room</button>
+      <div id="join-status" class="net-status"></div>
+      <div class="net-lobby-list" id="join-lobby-list"></div>
+    </div>
+
+    <div class="form-group" id="section-count">
       <label>Number of Players</label>
       <div class="player-count-group" id="count-btns">
         <button class="count-btn" data-n="3">3</button>
         <button class="count-btn selected" data-n="4">4</button>
         <button class="count-btn" data-n="5">5</button>
         <button class="count-btn" data-n="6">6</button>
+        <button class="count-btn" data-n="7">7</button>
+        <button class="count-btn" data-n="8">8</button>
       </div>
     </div>
-    <div class="form-group">
+    <div class="form-group" id="section-difficulty">
       <label>AI Difficulty</label>
       <div class="player-count-group" id="difficulty-btns">
         <button class="count-btn selected" data-d="easy">Easy</button>
@@ -673,19 +777,20 @@ body {
         <button class="count-btn" data-d="hard">Hard</button>
       </div>
     </div>
-    <div class="form-group">
+    <div class="form-group" id="section-target">
       <label>Win Target</label>
       <div class="player-count-group">
-        <button class="count-btn selected" data-target="300" id="t300">300 VP</button>
         <button class="count-btn" data-target="500" id="t500">500 VP</button>
+        <button class="count-btn" data-target="750" id="t750">750 VP</button>
+        <button class="count-btn selected" data-target="1000" id="t1000">1000 VP</button>
       </div>
     </div>
-    <div class="form-group" id="player-slots-group">
+    <div class="form-group" id="section-slots">
       <label>Player Slots</label>
       <div id="player-slots"></div>
     </div>
     <button class="btn-primary" id="start-btn">Begin the Round</button>
-    <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;align-items:center;">
+    <div style="margin-top:14px;display:flex;flex-direction:column;gap:8px;align-items:center;" id="section-checkboxes">
       <label style="font-size:0.8rem;color:var(--text-dim);cursor:pointer;display:inline-flex;align-items:center;gap:8px;">
         <input type="checkbox" id="use-ma" style="width:14px;height:14px;cursor:pointer;">
         ✦ Major Arcana expansion
@@ -697,6 +802,17 @@ body {
     </div>
   </div>
 </div>
+
+<!-- ONLINE WAIT SCREEN (client, after host starts, before first state arrives) -->
+<div id="online-wait-screen">
+  <div class="title-block">
+    <h1>Ben Mü</h1>
+    <div class="subtitle">Joining the table…</div>
+  </div>
+  <div class="net-status">Waiting for the host to deal the first hand.</div>
+  <button class="btn-primary" style="max-width:220px;" onclick="netLeaveWait()">Leave</button>
+</div>
+<div id="net-spectate-banner"></div>
 
 <!-- MA AUCTION SCREEN -->
 <div id="ma-auction-screen" style="display:none;position:fixed;inset:0;z-index:500;background:var(--bg);flex-direction:column;align-items:center;padding:20px 16px;gap:12px;overflow-y:auto;">
@@ -718,6 +834,7 @@ body {
   <div class="game-header">
     <div class="logo">Ben Mü</div>
     <div class="phase-label" id="phase-label">Auction</div>
+    <button id="log-btn" onclick="showGameLog()" style="background:none;border:1px solid var(--gold-dim);color:var(--gold-dim);border-radius:6px;padding:4px 10px;font-size:0.8rem;cursor:pointer;">📜 Log</button>
     <div class="vp-scoreboard" id="vp-scoreboard"></div>
   </div>
 
@@ -869,38 +986,38 @@ const SUITS = [
 ];
 
 const RANKS = [
-  { rank:1,  name:'Ace',    face:'A',  strip:'1',  count:1, cat:'Star',    iVP:10, eVP:0,  pen:0  },
+  { rank:1,  name:'Ace',    face:'A',  strip:'1',  count:1, cat:'Star',    iVP:10, eVP:0,  pen:0,  dualStar:true },
   { rank:2,  name:'2',      face:'2',  strip:'2',  count:1, cat:'Star',    iVP:5,  eVP:5,  pen:0,  dualVP:true },
-  { rank:3,  name:'3',      face:'3',  strip:'3',  count:1, cat:'Arrow',   iVP:0,  eVP:5,  pen:0  },
+  { rank:3,  name:'3',      face:'3',  strip:'3',  count:1, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
   { rank:4,  name:'4',      face:'4',  strip:'4',  count:1, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
-  { rank:5,  name:'5',      face:'5',  strip:'5',  count:3, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
-  { rank:6,  name:'6',      face:'6',  strip:'6',  count:1, cat:'Arrow',   iVP:0,  eVP:5,  pen:0  },
+  { rank:5,  name:'5',      face:'5',  strip:'5',  count:3, cat:'Arrow',   iVP:0,  eVP:10, pen:0,  dualArrow:true },
+  { rank:6,  name:'6',      face:'6',  strip:'6',  count:1, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
   { rank:7,  name:'7',      face:'7',  strip:'7',  count:1, cat:'Skull',   iVP:0,  eVP:-5, pen:-5 },
-  { rank:8,  name:'8',      face:'8',  strip:'8',  count:3, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
+  { rank:8,  name:'8',      face:'8',  strip:'8',  count:3, cat:'Arrow',   iVP:0,  eVP:5,  pen:0  },
   { rank:9,  name:'9',      face:'9',  strip:'9',  count:1, cat:'Star',    iVP:5,  eVP:-5, pen:0,  dualVP:true },
   { rank:10, name:'10',     face:'10', strip:'10', count:1, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
   { rank:11, name:'Page',   face:'Pg', strip:'11', count:2, cat:'Star',    iVP:5,  eVP:0,  pen:0  },
-  { rank:12, name:'Knight', face:'Kn', strip:'12', count:1, cat:'Skull',   iVP:0,  eVP:-5, pen:-5 },
+  { rank:12, name:'Knight', face:'Kn', strip:'12', count:1, cat:'Skull',   iVP:0,  eVP:-10, pen:-10, dualSkull:true },
   { rank:13, name:'Queen',  face:'Q',  strip:'13', count:1, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
-  { rank:14, name:'King',   face:'K',  strip:'14', count:1, cat:'Neutral', iVP:0,  eVP:0,  pen:0  },
+  { rank:14, name:'King',   face:'K',  strip:'14', count:1, cat:'Arrow',   iVP:0,  eVP:-10, pen:0,  dualArrow:true },
 ];
 
 const GOAL_TABLE = {
-  1: { goal:30 },
-  2: { goal:40 },
-  3: { goal:50 },
-  4: { goal:60 },
-  5: { goal:65 },
-  6: { goal:70 },
+  1: { goal:42 },
+  2: { goal:54 },
+  3: { goal:66 },
+  4: { goal:84 },
+  5: { goal:90 },
+  6: { goal:96 },
 };
 
 const GOAL_TABLE_5P = {
-  1: { goal:45 },
-  2: { goal:60 },
-  3: { goal:75 },
-  4: { goal:90 },
-  5: { goal:100 },
-  6: { goal:105 },
+  1: { goal:60 },
+  2: { goal:84 },
+  3: { goal:102 },
+  4: { goal:120 },
+  5: { goal:132 },
+  6: { goal:138 },
 };
 
 function buildDeck(usedSuits, rankFilter) {
@@ -929,6 +1046,9 @@ function buildDeck(usedSuits, rankFilter) {
           eVP: r.eVP,
           pen: r.pen,
           dualVP: r.dualVP || false,
+          dualArrow: r.dualArrow || false,
+          dualStar: r.dualStar || false,
+          dualSkull: r.dualSkull || false,
           isJoker: false,
           jokerRole: null,
           vpLabel: vpLabel(r),
@@ -951,13 +1071,13 @@ function buildDeck(usedSuits, rankFilter) {
       strip: role,
       cat: 'Joker',
       iVP: 0,
-      eVP: role === 'TD' ? 5 : 0, // TC net eVP is 0 (+5↑ −5☠), handled separately in scoreHand
+      eVP: role === 'TD' ? 5 : 0, // TC net eVP is 0 (+5↑ −5☢), handled separately in scoreHand
       eVPArrow: role === 'TC' ? 5 : 0,
       eVPSkull: role === 'TC' ? -5 : 0,
       pen: -5,
       isJoker: true,
       jokerRole: role,
-      vpLabel: role === 'TD' ? '▲+5' : '▲☠',
+      vpLabel: role === 'TD' ? '▲' : '▲☢',
     });
   }
 
@@ -965,13 +1085,16 @@ function buildDeck(usedSuits, rankFilter) {
 }
 
 function vpLabel(r) {
+  if (r.dualArrow) return r.rank === 14 ? '▼▼' : '▲▲';
+  if (r.dualStar) return '★★';
+  if (r.dualSkull) return '☢☢';
   if (r.dualVP) {
     if (r.rank === 2) return '★▲';
-    if (r.rank === 9) return '★☠';
+    if (r.rank === 9) return '★☢';
   }
   if (r.cat === 'Star') return '★';
   if (r.cat === 'Arrow') return '▲';
-  if (r.cat === 'Skull') return '☠';
+  if (r.cat === 'Skull') return '☢';
   return '';
 }
 
@@ -992,6 +1115,11 @@ let G = {};
 // Returns the seat id of the first human player (seat 0 in single-human games,
 // or the active human in hotseat — used for render and action targeting)
 function humanSeat() {
+  // Online client: always show my own seat — never another human's, even if it's their turn
+  if (NET.mode === 'join') return NET.mySeat ?? 0;
+  // Online host: always show the host's own seat — other human seats are remote
+  // players with their own screens, never locally hotseat-displayed.
+  if (NET.mode === 'host' && NET.started) return 0;
   // In hotseat, the "active" human is whoever's turn it is
   if (G.currentTrick && G.awaitingHumanAction) {
     const seat = G.currentTrick.currentSeat;
@@ -1089,14 +1217,52 @@ function dealCards() {
   // 4 suits × 9 = 36 ÷ 3 = 12 cards each, no kitty ✓
   const rankFilter = G.numPlayers === 3 ? [1, 2, 3, 4, 5, 6] : null;
 
-  const deck = buildDeck(usedSuits, rankFilter);
+  const fullDeck = buildDeck(usedSuits, rankFilter);
   const n = G.numPlayers;
-  const cardsPerPlayer = Math.floor(deck.length / n);
-  G.totalTricks = cardsPerPlayer;
-  G.kitty = deck.slice(n * cardsPerPlayer); // leftover cards, shown face-up
+  G.handNum = (G.handNum || 0) + 1;
+
+  const jokerCards = fullDeck.filter(c => c.isJoker);
+  const nonJokerCards = fullDeck.filter(c => !c.isJoker);
+
+  // Deal order for non-joker cards: VP-ascending, ties broken by seat order from dealer+1.
+  const seatOrder = [];
+  for (let i = 0; i < n; i++) seatOrder.push((G.dealer + 1 + i) % n);
+  const vpAscOrder = [...seatOrder].sort((a, b) => {
+    const pa = G.players.find(p => p.id === a);
+    const pb = G.players.find(p => p.id === b);
+    return (pa.vpTotal || 0) - (pb.vpTotal || 0);
+  });
+
+  const dealtHands = {};
+  for (const seat of seatOrder) dealtHands[seat] = [];
+  nonJokerCards.forEach((card, idx) => {
+    const seat = vpAscOrder[idx % n];
+    dealtHands[seat].push(card);
+  });
+
+  // Jokers are distributed separately from the rest of the deck:
+  // - Hand 1: random order, so everyone gets at most one before any wraparound.
+  // - Hand 2+: ascending-VP order, excluding whoever's tied for the highest VP —
+  //   so any leftover Jokers wrap back around to the lowest-VP players first,
+  //   and the current leader(s) never receive one via this distribution.
+  let jokerOrder;
+  if (G.handNum === 1) {
+    jokerOrder = shuffle([...seatOrder]);
+  } else {
+    const maxVP = Math.max(...G.players.map(p => p.vpTotal || 0));
+    jokerOrder = vpAscOrder.filter(seat => (G.players.find(p => p.id === seat).vpTotal || 0) < maxVP);
+    if (jokerOrder.length === 0) jokerOrder = [...vpAscOrder]; // safety: everyone tied at max VP
+  }
+  jokerCards.forEach((card, idx) => {
+    const seat = jokerOrder[idx % jokerOrder.length];
+    dealtHands[seat].push(card);
+  });
+
+  G.totalTricks = Math.ceil(fullDeck.length / n);
+  G.kitty = []; // every card is now dealt — no leftover kitty
 
   for (let i = 0; i < n; i++) {
-    G.players[i].hand = deck.slice(i * cardsPerPlayer, (i + 1) * cardsPerPlayer);
+    G.players[i].hand = dealtHands[G.players[i].id] || [];
     G.players[i].tableau = [];
     G.players[i].tricksWon = [];
     G.players[i].handVP = 0;
@@ -1109,27 +1275,41 @@ function dealCards() {
   G.chiefSeat = null;
   G.viceSeat = null;
   G.partnerSeat = null;
+  G.partnerSeat2 = null;
   G.trump = { viceChoice:null, chiefChoice:null };
   G.trickNum = 0;
   G.selectedCards = [];
   G.maEffects = {};
-  G.handNum = (G.handNum || 0) + 1;
   G.teams = [];
   G.soloSeats = [];
   G.hermitActivated = false;
   G.panTeams = [];
 
-  // Debug cheat: pull all jokers from AI hands into human bidding tableau
+  // Jokers move straight to each player's bidding tableau at deal time —
+  // this makes everyone's Joker holdings visible before bidding starts,
+  // and counts as their minimum starting bid.
+  for (let i = 0; i < n; i++) {
+    const jokers = G.players[i].hand.filter(c => c.isJoker);
+    G.players[i].hand = G.players[i].hand.filter(c => !c.isJoker);
+    G.players[i].tableau.push(...jokers);
+  }
+
+  // Debug cheat: pull half of all Jokers in play into human bidding tableau
   if (G.cheatJokers) {
-    for (let i = 1; i < G.numPlayers; i++) {
-      const aiJokers = G.players[i].hand.filter(c => c.isJoker);
-      G.players[i].hand = G.players[i].hand.filter(c => !c.isJoker);
-      G.players[0].tableau.push(...aiJokers);
+    const allJokerEntries = [];
+    for (let i = 0; i < G.numPlayers; i++) {
+      for (const c of G.players[i].tableau) {
+        if (c.isJoker) allJokerEntries.push(c);
+      }
     }
-    // Also move any jokers already in human hand to tableau
-    const humanJokers = G.players[0].hand.filter(c => c.isJoker);
-    G.players[0].hand = G.players[0].hand.filter(c => !c.isJoker);
-    G.players[0].tableau.push(...humanJokers);
+    const shuffled = shuffle(allJokerEntries);
+    const half = Math.ceil(shuffled.length / 2);
+    const toMove = shuffled.slice(0, half);
+    const moveIds = new Set(toMove.map(c => c.id));
+    for (let i = 0; i < G.numPlayers; i++) {
+      G.players[i].tableau = G.players[i].tableau.filter(c => !moveIds.has(c.id));
+    }
+    G.players[0].tableau.push(...toMove);
   }
 }
 
@@ -1318,16 +1498,45 @@ function humanBid(cards, seat) {
 function startAuction() {
   G.phase = 'AUCTION';
   _generation++;
+
+  // Turn order: VP-ascending, ties broken by seat order starting at dealer+1
+  const seatOrder = [];
+  for (let i = 0; i < G.numPlayers; i++) seatOrder.push((G.dealer + 1 + i) % G.numPlayers);
+  const order = [...seatOrder].sort((a, b) => {
+    const pa = G.players.find(p => p.id === a);
+    const pb = G.players.find(p => p.id === b);
+    return (pa.vpTotal || 0) - (pb.vpTotal || 0);
+  });
+
+  // Jokers are already in tableau from deal time — they count as each player's
+  // minimum starting bid. Seed maxBid/lastRaiseSeat from whoever holds the most.
+  let maxBid = 0, lastRaiseSeat = null;
+  for (const seat of order) {
+    const p = G.players.find(pl => pl.id === seat);
+    const jokerCount = p.tableau.filter(c => c.isJoker).length;
+    if (jokerCount > maxBid) {
+      maxBid = jokerCount;
+      lastRaiseSeat = seat;
+    }
+  }
+
   G.auction = {
-    currentBidder: (G.dealer + 1) % G.numPlayers,
+    order,
+    currentBidder: order[0],
     passedSinceLastRaise: new Set(),
-    lastRaiseSeat: null,
-    maxBid: 0,
+    lastRaiseSeat,
+    maxBid,
     chiefBidCount: 0,
-    raiseOrder: [], // tracks order players reached each bid count
+    raiseOrder: lastRaiseSeat !== null ? [lastRaiseSeat] : [],
   };
   addLog('Auction begins.', true);
   advanceAuction();
+}
+
+function nextInAuctionOrder(seat) {
+  const order = G.auction.order;
+  const idx = order.indexOf(seat);
+  return order[(idx + 1) % order.length];
 }
 
 function advanceAuction() {
@@ -1355,7 +1564,7 @@ function advanceAuction() {
   let seat = auction.currentBidder;
   let loops = 0;
   while (auction.passedSinceLastRaise.has(seat)) {
-    seat = (seat + 1) % G.numPlayers;
+    seat = nextInAuctionOrder(seat);
     loops++;
     if (loops > G.numPlayers) { endAuction(); return; } // safety
   }
@@ -1420,8 +1629,8 @@ function placeBid(seat, cards) {
 
   G.awaitingHumanAction = false;
   G.selectedCards = [];
-  // Move to next seat — advanceAuction will skip passed players
-  G.auction.currentBidder = (seat + 1) % G.numPlayers;
+  // Move to next seat in VP-ascending auction order — advanceAuction will skip passed players
+  G.auction.currentBidder = nextInAuctionOrder(seat);
   advanceAuction();
 }
 
@@ -1430,127 +1639,99 @@ function aiAuctionBid(seat) {
   if (!player) return;
   if (G.phase !== 'AUCTION' || G.auction.currentBidder !== seat) return;
 
-  const N = G.numPlayers;
-  const jokers = player.hand.filter(c => c.isJoker);
-  const hand = player.hand.filter(c => !c.isJoker);
+  const jokers = player.tableau.filter(c => c.isJoker);
+  const jokerCount = jokers.length;
+  const totalCards = player.hand.length + player.tableau.length;
+  const majorityThreshold = Math.floor(totalCards / 2) + 1;
 
-  // Compute total cards per suit and per rank in the current deck
+  const allCards = [...player.hand, ...player.tableau.filter(c => !c.isJoker)];
   const activeSuits = G.activeSuits.map(s => s.name);
-  const rankFilter = G.numPlayers === 3 ? [1,2,3,4,5,6,7] : null;
-  const activeRanks = rankFilter ? RANKS.filter(r => rankFilter.includes(r.rank)) : RANKS;
+  const duplicateRanks = new Set([5, 8, 11]); // multiple physical copies per suit — excluded from monopoly rank evaluation
+  const activeRanks = [...new Set(allCards.map(c => c.rank))].filter(r => !duplicateRanks.has(r));
 
-  const totalPerSuit = activeRanks.reduce((sum, r) => sum + r.count, 0); // non-joker cards per suit
-  const totalPerRank = {}; // total copies of each rank across all active suits
-  for (const r of activeRanks) {
-    totalPerRank[r.rank] = r.count * activeSuits.length;
-  }
-
-  // Count what AI holds per suit and per rank
-  const heldBySuit = {}, heldByRank = {};
-  for (const c of hand) {
-    heldBySuit[c.suit] = (heldBySuit[c.suit] || 0) + 1;
-    heldByRank[c.rank] = (heldByRank[c.rank] || 0) + 1;
-  }
-
-  // Threshold for suits: ≥ 1/N of total non-joker cards of that suit
-  const qualSuits = activeSuits.filter(s =>
-    (heldBySuit[s] || 0) >= totalPerSuit / N
-  );
-
-  // Threshold for ranks:
-  // - Duplicate ranks (count > 1 per suit: Ace=3, 7=3, Page=2) → use 1/N formula
-  // - Non-duplicate ranks (count = 1 per suit) → qualify only if AI holds 4+
-  const qualRanks = activeRanks
-    .map(r => r.rank)
-    .filter(r => {
-      const rankDef = activeRanks.find(rk => rk.rank === r);
-      const held = heldByRank[r] || 0;
-      if (rankDef.count > 1) {
-        return held >= totalPerRank[r] / N;
-      } else {
-        return held >= 4;
+  // Opponent card pools, for Hard-difficulty exact suit-win checks
+  const opponentCardsBySuit = {};
+  if (G.difficulty === 'hard') {
+    for (const p of G.players) {
+      if (p.id === seat) continue;
+      for (const c of [...p.hand, ...p.tableau.filter(cc => !cc.isJoker)]) {
+        (opponentCardsBySuit[c.suit] = opponentCardsBySuit[c.suit] || []).push(c);
       }
-    });
+    }
+  }
 
-  // How many trump cards would each choice unlock?
-  const trumpCountForSuit = (suit) => totalPerSuit; // all cards of that suit become trump
-  const trumpCountForRank = (rank) => {
-    const r = RANKS.find(rk => rk.rank === rank);
-    return r ? r.count * activeSuits.length : 0;
-  };
+  function suitWinners(suit) {
+    const mine = allCards.filter(c => c.suit === suit);
+    if (G.difficulty === 'hard') {
+      // Exact: a card wins if no opponent holds a higher card of the same suit
+      return mine.filter(c => !(opponentCardsBySuit[suit] || []).some(oc => oc.rank > c.rank));
+    }
+    // Normal/Easy: graduated suit-length support — K needs none, Q needs 1 support card, Kn needs 2
+    const count = mine.length;
+    return mine.filter(c =>
+      c.rank === 14 ||
+      (c.rank === 13 && count >= 2) ||
+      (c.rank === 12 && count >= 3)
+    );
+  }
 
-  // Build the non-joker bid cards
-  let nonJokerBids = [];
+  function rankWinners(rank) {
+    const mine = allCards.filter(c => c.rank === rank);
+    const totalCopiesInPlay = activeSuits.length; // non-duplicate ranks have exactly 1 copy per suit
+    if (mine.length >= totalCopiesInPlay) return mine; // monopoly — every copy accounted for
+    if (rank >= 12) return mine;
+    return [];
+  }
 
-  const bestQualSuit = qualSuits.sort((a, b) =>
-    (heldBySuit[b] || 0) - (heldBySuit[a] || 0))[0];
-  const bestQualRank = qualRanks.sort((a, b) =>
-    (heldByRank[b] || 0) - (heldByRank[a] || 0))[0];
+  // Find best single suit and best single rank
+  let bestSuit = null, bestSuitWinners = [];
+  for (const suit of activeSuits) {
+    const w = suitWinners(suit);
+    if (w.length > bestSuitWinners.length) { bestSuit = suit; bestSuitWinners = w; }
+  }
+  let bestRank = null, bestRankWinners = [];
+  for (const rank of activeRanks) {
+    const w = rankWinners(rank);
+    if (w.length > bestRankWinners.length) { bestRank = rank; bestRankWinners = w; }
+  }
 
-  if (bestQualSuit && bestQualRank !== undefined) {
-    // Both qualify — check for intersection
-    const rankInSuit = hand.find(c => c.rank === bestQualRank && c.suit === bestQualSuit);
-    if (rankInSuit) {
-      // Double qualifier — bid that one card
-      nonJokerBids = [rankInSuit];
+  // Combine best suit + best rank into one projection, including the double-trump bonus card
+  const winnerIds = new Set();
+  let combinedWinners = [];
+  const addWinners = (arr) => { for (const c of arr) { if (!winnerIds.has(c.id)) { winnerIds.add(c.id); combinedWinners.push(c); } } };
+  if (bestSuit) addWinners(bestSuitWinners);
+  if (bestRank !== null) {
+    const isMonopoly = bestRankWinners.length >= activeSuits.length;
+    if (isMonopoly && bestRankWinners.length > 1) {
+      // Holding every copy of the rank — only bid one representative, choosing the
+      // suit that also gives the best independent chance of winning.
+      let repCard = bestRankWinners[0], repScore = -1;
+      for (const c of bestRankWinners) {
+        const suitScore = suitWinners(c.suit).length * 100 + allCards.filter(cc => cc.suit === c.suit).length;
+        if (suitScore > repScore) { repScore = suitScore; repCard = c; }
+      }
+      addWinners([repCard]);
     } else {
-      // No intersection — bid highest of qualifying suit + best copy of qualifying rank
-      const highestInSuit = hand
-        .filter(c => c.suit === bestQualSuit)
-        .sort((a, b) => b.rank - a.rank)[0];
-      // For qualifying rank: find suit where AI holds most copies of that rank
-      const rankBySuit = {};
-      for (const c of hand.filter(c => c.rank === bestQualRank)) {
-        rankBySuit[c.suit] = (rankBySuit[c.suit] || 0) + 1;
-      }
-      const bestSuitForRank = Object.entries(rankBySuit)
-        .sort((a, b) => b[1] - a[1])[0]?.[0];
-      const rankCard = hand.find(c => c.rank === bestQualRank && c.suit === bestSuitForRank);
-      nonJokerBids = [highestInSuit, rankCard].filter(Boolean);
+      addWinners(bestRankWinners);
     }
-  } else if (bestQualSuit) {
-    // Only suit qualifies
-    const highestInSuit = hand
-      .filter(c => c.suit === bestQualSuit)
-      .sort((a, b) => b.rank - a.rank)[0];
-    if (highestInSuit) nonJokerBids = [highestInSuit];
-  } else if (bestQualRank !== undefined) {
-    // Only rank qualifies
-    const rankBySuit = {};
-    for (const c of hand.filter(c => c.rank === bestQualRank)) {
-      rankBySuit[c.suit] = (rankBySuit[c.suit] || 0) + 1;
-    }
-    const bestSuitForRank = Object.entries(rankBySuit)
-      .sort((a, b) => b[1] - a[1])[0]?.[0];
-    const rankCard = hand.find(c => c.rank === bestQualRank && c.suit === bestSuitForRank);
-    if (rankCard) nonJokerBids = [rankCard];
   }
-  // If neither qualifies: nonJokerBids stays empty — bid Jokers only
-
-  // Apply 6-card max — Jokers fill first, then non-joker bids
-  const maxNonJokers = Math.max(0, 6 - jokers.length);
-  if (nonJokerBids.length > maxNonJokers) {
-    // Limited space — pick by trump count, ties broken by rank
-    nonJokerBids = nonJokerBids
-      .map(c => ({
-        card: c,
-        trumpCount: isTrump(c)
-          ? Infinity // already trump in current resolved — shouldn't apply at bid time
-          : (bestQualSuit && c.suit === bestQualSuit)
-            ? trumpCountForSuit(c.suit)
-            : trumpCountForRank(c.rank),
-        isRank: qualRanks.includes(c.rank),
-      }))
-      .sort((a, b) => {
-        if (b.trumpCount !== a.trumpCount) return b.trumpCount - a.trumpCount;
-        return a.isRank ? -1 : 1; // rank wins ties
-      })
-      .slice(0, maxNonJokers)
-      .map(x => x.card);
+  if (bestSuit && bestRank !== null) {
+    const doubleCard = allCards.find(c => c.suit === bestSuit && c.rank === bestRank);
+    if (doubleCard) addWinners([doubleCard]); // double trump — guaranteed winner regardless of raw rank
   }
 
-  // Final bid = non-joker cards only (Jokers are moved automatically by placeBid)
-  placeBid(seat, nonJokerBids);
+  let bidCards = [];
+  if (combinedWinners.length > 0) {
+    // Bid at most 2 non-Joker cards, advertising the strongest suit/rank held —
+    // capped the same regardless of Joker count, even if projection would justify more.
+    bidCards = [...combinedWinners].sort((a, b) => b.rank - a.rank).slice(0, 2);
+  } else if (jokerCount === 0) {
+    // No Jokers and nothing projects a winner — still advertise the best card available
+    const fallback = [...allCards].sort((a, b) => b.rank - a.rank)[0];
+    bidCards = fallback ? [fallback] : [];
+  }
+
+  placeBid(seat, bidCards);
 }
 
 function rateHand(hand) {
@@ -1583,15 +1764,14 @@ function endAuction() {
     const jokers = p.tableau.filter(c => c.isJoker);
     const tds = jokers.filter(c => c.jokerRole === 'TD').length;
     const tcs = jokers.filter(c => c.jokerRole === 'TC').length;
-    const highCard = p.tableau.filter(c => !c.isJoker).reduce((max, c) => Math.max(max, c.rank), -1);
-    const raiseIdx = G.auction.raiseOrder.lastIndexOf(p.id); // last time they raised
+    const sortedRanks = p.tableau.filter(c => !c.isJoker).map(c => c.rank).sort((x, y) => y - x);
     return {
       bidCount: p.tableau.length,
       jokerCount: tds + tcs,
       tdCount: tds,
       tcCount: tcs,
-      highCard,
-      raiseIdx: raiseIdx === -1 ? 999 : raiseIdx, // lower = raised earlier = better
+      sortedRanks,
+      randTiebreak: Math.random(), // only used if everything above is fully tied
     };
   }
 
@@ -1602,8 +1782,14 @@ function endAuction() {
     if (sb.jokerCount !== sa.jokerCount) return sb.jokerCount - sa.jokerCount;
     if (sb.tdCount !== sa.tdCount) return sb.tdCount - sa.tdCount;
     if (sb.tcCount !== sa.tcCount) return sb.tcCount - sa.tcCount;
-    if (sb.highCard !== sa.highCard) return sb.highCard - sa.highCard;
-    return sa.raiseIdx - sb.raiseIdx; // earlier raiser wins
+    // Compare full sorted rank lists, highest first, until they differ
+    const len = Math.max(sa.sortedRanks.length, sb.sortedRanks.length);
+    for (let i = 0; i < len; i++) {
+      const ra = sa.sortedRanks[i] ?? -1;
+      const rb = sb.sortedRanks[i] ?? -1;
+      if (rb !== ra) return rb - ra;
+    }
+    return sa.randTiebreak - sb.randTiebreak; // fully tied — random
   });
 
   const chiefSeat = bidders[0]?.id;
@@ -1771,39 +1957,28 @@ function scorePartnerStrength(player) {
   const difficulty = G.difficulty || 'easy';
   const isHard = difficulty === 'hard';
 
-  // Cards visible: tableau always; hand only on Hard
-  const visibleCards = isHard
+  // Bid count is always the actual auction commitment (tableau), regardless of difficulty.
+  const bidCount = player.tableau.length;
+
+  // Quality signals (Jokers, trump, rank) — tableau-only at Easy/Normal;
+  // Hard can additionally see uncommitted strength still sitting in hand.
+  const visibleNonJoker = isHard
     ? [...player.tableau, ...player.hand].filter(c => !c.isJoker)
     : player.tableau.filter(c => !c.isJoker);
-
-  const jokers = isHard
+  const visibleJokers = isHard
     ? [...player.tableau, ...player.hand].filter(c => c.isJoker)
     : player.tableau.filter(c => c.isJoker);
 
-  const tds = jokers.filter(c => c.jokerRole === 'TD').length;
-  const tcs = jokers.filter(c => c.jokerRole === 'TC').length;
+  const tds = visibleJokers.filter(c => c.jokerRole === 'TD').length;
+  const tcs = visibleJokers.filter(c => c.jokerRole === 'TC').length;
+  const jokerCount = tds + tcs;
 
-  // Trump tier per card (using resolved trump)
-  const doubleTrump = visibleCards.filter(c => trumpTierForCard(c) === 3);
-  const highTrump   = visibleCards.filter(c => trumpTierForCard(c) === 2);
-  const lowTrump    = visibleCards.filter(c => trumpTierForCard(c) === 1);
+  const doubleTrumpCount = visibleNonJoker.filter(c => trumpTierForCard(c) === 3).length;
+  const trumpCount = visibleNonJoker.filter(c => trumpTierForCard(c) >= 1).length + visibleJokers.length; // Jokers always count as trump
 
-  // Highest double trump rank, highest high trump rank, highest low trump rank
-  const topDouble = doubleTrump.reduce((m, c) => Math.max(m, c.rank), -1);
-  const topHigh   = highTrump.reduce((m, c) => Math.max(m, c.rank), -1);
-  const topLow    = lowTrump.reduce((m, c) => Math.max(m, c.rank), -1);
+  const sortedRanks = visibleNonJoker.map(c => c.rank).sort((x, y) => y - x);
 
-  // Arrow VP cards (for tiebreak)
-  const arrowCards = visibleCards.filter(c => c.eVP > 0 || c.dualVP);
-  const arrowCount = arrowCards.length;
-
-  return {
-    tds, tcs,
-    doubleTrumpCount: doubleTrump.length, topDouble,
-    highTrumpCount: highTrump.length, topHigh,
-    lowTrumpCount: lowTrump.length, topLow,
-    arrowCount,
-  };
+  return { bidCount, jokerCount, tds, tcs, doubleTrumpCount, trumpCount, sortedRanks };
 }
 
 function trumpTierForCard(c) {
@@ -1824,24 +1999,27 @@ function comparePartners(a, b) {
   const sa = scorePartnerStrength(a);
   const sb = scorePartnerStrength(b);
 
-  // 1. Most TDs
+  // 1. Bid count
+  if (sb.bidCount !== sa.bidCount) return sb.bidCount - sa.bidCount;
+  // 2. Joker count
+  if (sb.jokerCount !== sa.jokerCount) return sb.jokerCount - sa.jokerCount;
+  // 3. TD count
   if (sb.tds !== sa.tds) return sb.tds - sa.tds;
-  // 2. Most TCs
+  // 4. TC count
   if (sb.tcs !== sa.tcs) return sb.tcs - sa.tcs;
-  // 3. Most double trump cards
+  // 5. Double-trump count
   if (sb.doubleTrumpCount !== sa.doubleTrumpCount) return sb.doubleTrumpCount - sa.doubleTrumpCount;
-  // 4. Highest double trump rank
-  if (sb.topDouble !== sa.topDouble) return sb.topDouble - sa.topDouble;
-  // 5. Most high trump cards
-  if (sb.highTrumpCount !== sa.highTrumpCount) return sb.highTrumpCount - sa.highTrumpCount;
-  // 6. Highest high trump rank
-  if (sb.topHigh !== sa.topHigh) return sb.topHigh - sa.topHigh;
-  // 7. Most low trump cards
-  if (sb.lowTrumpCount !== sa.lowTrumpCount) return sb.lowTrumpCount - sa.lowTrumpCount;
-  // 8. Highest low trump rank
-  if (sb.topLow !== sa.topLow) return sb.topLow - sa.topLow;
-  // 9. Most arrow VP cards (tiebreak)
-  return sb.arrowCount - sa.arrowCount;
+  // 6. Trump count (any trump, including doubles)
+  if (sb.trumpCount !== sa.trumpCount) return sb.trumpCount - sa.trumpCount;
+  // 7. Full sorted rank comparison, highest to lowest, until they differ
+  const len = Math.max(sa.sortedRanks.length, sb.sortedRanks.length);
+  for (let i = 0; i < len; i++) {
+    const ra = sa.sortedRanks[i] ?? -1;
+    const rb = sb.sortedRanks[i] ?? -1;
+    if (rb !== ra) return rb - ra;
+  }
+  // 8. Fully tied — random
+  return Math.random() - 0.5;
 }
 
 function startPartnerSelection() {
@@ -1868,23 +2046,75 @@ function startPartnerSelection() {
 }
 
 function selectPartner(seat) {
-  G.partnerSeat = seat;
   const partnerPlayer = G.players.find(p => p.id === seat);
   const chiefPlayer = G.players.find(p => p.id === G.chiefSeat);
   if (partnerPlayer) partnerPlayer.isPartner = true;
   G.partnerSelectPending = false;
-  addLog(`${chiefPlayer?.name} picks ${partnerPlayer?.name} as partner.`, true);
 
-  // Build initial teams
-  G.teams = [
-    { id: 'chief', seats: [G.chiefSeat, seat].filter(s => s !== null && s !== undefined), panDoubled: false },
-    { id: 'vice',  seats: G.players.map(p => p.id).filter(id => id !== G.chiefSeat && id !== seat), panDoubled: false },
-  ];
+  if (G.partnerSeat === null) {
+    // First partner pick
+    G.partnerSeat = seat;
+    addLog(`${chiefPlayer?.name} picks ${partnerPlayer?.name} as partner.`, true);
+
+    if (G.numPlayers >= 7) {
+      // 7-8P: Chief gets a second partner pick before teams finalize
+      promptSecondPartner();
+      return;
+    }
+  } else {
+    // Second partner pick (7-8P only)
+    G.partnerSeat2 = seat;
+    addLog(`${chiefPlayer?.name} also picks ${partnerPlayer?.name} as a second partner.`, true);
+  }
+
+  finalizePartnerSelection();
+}
+
+function promptSecondPartner() {
+  const chiefPlayer = G.players.find(p => p.id === G.chiefSeat);
+  addLog(`${chiefPlayer?.name} chooses a second partner.`, true);
+
+  if (chiefPlayer.type === 'AI') {
+    const gen = _generation;
+    setTimeout(() => {
+      if (gen !== _generation) return;
+      if (G.phase !== 'PARTNER_SELECTION') return;
+      const eligible = G.players.filter(p => p.id !== G.chiefSeat && p.id !== G.viceSeat && p.id !== G.partnerSeat);
+      if (eligible.length === 0) { finalizePartnerSelection(); render(); return; }
+      const sorted = [...eligible].sort(comparePartners);
+      selectPartner(sorted[0].id);
+      render();
+    }, 800);
+  } else {
+    G.awaitingHumanAction = true;
+    G.partnerSelectPending = true;
+    render();
+  }
+}
+
+function finalizePartnerSelection() {
+  const chiefSeats = [G.chiefSeat, G.partnerSeat, G.partnerSeat2].filter(s => s !== null && s !== undefined);
+  const willRunPreDealMA = G.useMA && hasPreDealMACards();
+
+  if (willRunPreDealMA) {
+    // Team assignment for everyone else happens during the Lovers/Pan/Hermit phase —
+    // Vice's team starts with just Vice; all other players stay unaffiliated until resolved.
+    G.teams = [
+      { id: 'chief', seats: chiefSeats, panDoubled: false },
+      { id: 'vice',  seats: [G.viceSeat].filter(s => s !== null && s !== undefined), panDoubled: false },
+    ];
+  } else {
+    // No Lovers/Pan/Hermit phase this hand — everyone else defaults onto Vice's team immediately.
+    G.teams = [
+      { id: 'chief', seats: chiefSeats, panDoubled: false },
+      { id: 'vice',  seats: G.players.map(p => p.id).filter(id => !chiefSeats.includes(id)), panDoubled: false },
+    ];
+  }
   G.soloSeats = [];
   G.hermitActivated = false;
   G.panTeams = [];
 
-  if (G.useMA && hasPreDealMACards()) {
+  if (willRunPreDealMA) {
     startPreDealMAPhase();
   } else {
     startTrickPlay();
@@ -1917,8 +2147,22 @@ function advancePreDealMA() {
   }
 
   if (G.preDealMAIdx >= G.preDealMAOrder.length || G.hermitActivated) {
-    // Assign any unassigned players to solo if Hermit was activated
-    if (G.hermitActivated) assignSoloPlayers();
+    if (G.hermitActivated) {
+      // Hermit stops further affiliations — anyone never invited becomes Solo
+      assignSoloPlayers();
+    } else {
+      // Phase ran its course without Hermit — anyone never invited defaults onto Vice's team
+      const viceTeam = G.teams.find(t => t.id === 'vice');
+      const assignedSeats = G.teams.flatMap(t => t.seats);
+      const leftover = G.players.map(p => p.id).filter(id => !assignedSeats.includes(id));
+      if (viceTeam) {
+        for (const id of leftover) viceTeam.seats.push(id);
+        G.soloSeats = [];
+      } else {
+        // Safety net: no Vice team exists to default onto — treat leftover as Solo
+        G.soloSeats = leftover;
+      }
+    }
     addLog('✦ Pre-Deal MA phase complete.', true);
     startTrickPlay();
     render();
@@ -1934,6 +2178,9 @@ function advancePreDealMA() {
       if (gen !== _generation) return;
       aiPreDealMA(seat);
     }, 800);
+  } else if (netIsRemoteControlled(seat)) {
+    G.awaitingHumanAction = true;
+    render(); // just wait for their network intent — no local modal
   } else {
     showPreDealMAChoice(seat);
   }
@@ -1971,11 +2218,10 @@ function aiPreDealMA(seat) {
     return;
   }
 
-  // Hard AI: use Lovers to invite the strongest available player
+  // Hard AI: use Lovers to invite the strongest available unaffiliated player
   const loversCard = preDealCards.find(c => c.maId === 'Lovers');
   if (loversCard) {
-    const myTeam = getPlayerTeam(seat);
-    const eligible = G.players.filter(p => p.id !== G.chiefSeat && p.id !== G.viceSeat && p.id !== seat);
+    const eligible = G.players.filter(p => p.id !== seat && !getPlayerTeam(p.id));
     if (eligible.length > 0) {
       const target = [...eligible].sort(comparePartners)[0];
       activatePreDealMA(seat, loversCard, target.id);
@@ -2003,6 +2249,11 @@ function showPreDealMAChoice(seat) {
         label: `✦ ${card.label}`,
         fn: () => {
           closeModal();
+          if (NET.mode === 'join') {
+            if (card.maId === 'Hermit') { netPreDealMAActivate(card.id, null); }
+            else { showPreDealMATargetChoice(seat, card); }
+            return;
+          }
           if (card.maId === 'Hermit') {
             activatePreDealMA(seat, card, null);
           } else {
@@ -2013,6 +2264,7 @@ function showPreDealMAChoice(seat) {
       })),
       { label: 'Skip', fn: () => {
         closeModal();
+        if (NET.mode === 'join') { netPreDealMASkip(); return; }
         G.awaitingHumanAction = false;
         G.preDealMAIdx++;
         advancePreDealMA();
@@ -2024,7 +2276,7 @@ function showPreDealMAChoice(seat) {
 }
 
 function showPreDealMATargetChoice(seat, card) {
-  const eligible = G.players.filter(p => p.id !== G.chiefSeat && p.id !== G.viceSeat && p.id !== seat);
+  const eligible = G.players.filter(p => p.id !== seat && !getPlayerTeam(p.id));
   showModal(
     `${card.label} — Choose a Player`,
     card.desc,
@@ -2032,11 +2284,28 @@ function showPreDealMATargetChoice(seat, card) {
     [
       ...eligible.map(p => ({
         label: p.name,
-        fn: () => { closeModal(); activatePreDealMA(seat, card, p.id); }
+        fn: () => {
+          closeModal();
+          if (NET.mode === 'join') { netPreDealMAActivate(card.id, p.id); return; }
+          activatePreDealMA(seat, card, p.id);
+        }
       })),
       { label: 'Cancel', fn: () => { closeModal(); showPreDealMAChoice(seat); } },
     ]
   );
+}
+
+function teamLabel(team) {
+  if (!team) return 'no team';
+  if (team.id === 'chief') return "Chief's team";
+  if (team.id === 'vice') return "Vice's team";
+  return `Team ${team.id}`;
+}
+
+function nextAltTeamId() {
+  let n = 2;
+  while (G.teams.some(t => t.id === `vice${n}`)) n++;
+  return `vice${n}`;
 }
 
 function activatePreDealMA(activatorSeat, card, targetSeat) {
@@ -2059,61 +2328,32 @@ function activatePreDealMA(activatorSeat, card, targetSeat) {
   const target = G.players.find(p => p.id === targetSeat);
   if (!target) { G.preDealMAIdx++; advancePreDealMA(); render(); return; }
 
-  // Determine which team the activator belongs to
-  if (activatorSeat === G.chiefSeat) {
-    // Chief: add target to Chief's team
-    const chiefTeam = G.teams.find(t => t.id === 'chief');
-    if (chiefTeam && !chiefTeam.seats.includes(targetSeat)) {
-      chiefTeam.seats.push(targetSeat);
-      target.isPartner = true;
-      // Remove from vice team if there
-      const viceTeam = G.teams.find(t => t.id === 'vice');
-      if (viceTeam) viceTeam.seats = viceTeam.seats.filter(s => s !== targetSeat);
+  const activatorTeam = getPlayerTeam(activatorSeat);
+
+  if (activatorTeam) {
+    // Activator already belongs to a team (Chief, Vice, or an existing alternate team) — target joins it.
+    if (!activatorTeam.seats.includes(targetSeat)) {
+      activatorTeam.seats.push(targetSeat);
+      if (activatorTeam.id === 'chief') target.isPartner = true;
     }
     if (card.maId === 'Pan') {
-      const chiefTeam = G.teams.find(t => t.id === 'chief');
-      if (chiefTeam) chiefTeam.panDoubled = true;
-      G.panTeams.push('chief');
-      addLog(`${activator.name} activates Pan — Chief's team Arrow VP doubled if goal met!`, true);
+      activatorTeam.panDoubled = true;
+      G.panTeams.push(activatorTeam.id);
+      addLog(`${activator.name} activates Pan — ${teamLabel(activatorTeam)}'s Arrow VP doubled if it wins!`, true);
     } else {
-      addLog(`${activator.name} invites ${target.name} to join Chief's team!`, true);
-    }
-  } else if (activatorSeat === G.viceSeat) {
-    // Vice: add target to Vice's team
-    const viceTeam = G.teams.find(t => t.id === 'vice');
-    if (viceTeam && !viceTeam.seats.includes(targetSeat)) {
-      viceTeam.seats.push(targetSeat);
-      // Remove from alternates if there
-      const altTeam = G.teams.find(t => t.id === 'alternates');
-      if (altTeam) altTeam.seats = altTeam.seats.filter(s => s !== targetSeat);
-    }
-    if (card.maId === 'Pan') {
-      const viceTeam = G.teams.find(t => t.id === 'vice');
-      if (viceTeam) viceTeam.panDoubled = true;
-      G.panTeams.push('vice');
-      addLog(`${activator.name} activates Pan — Vice's team Arrow VP doubled if Chief fails!`, true);
-    } else {
-      addLog(`${activator.name} invites ${target.name} to join Vice's team!`, true);
+      addLog(`${activator.name} invites ${target.name} to join ${teamLabel(activatorTeam)}!`, true);
     }
   } else {
-    // Third-party: form or join Alternates team
-    let altTeam = G.teams.find(t => t.id === 'alternates');
-    if (!altTeam) {
-      altTeam = { id: 'alternates', seats: [], panDoubled: false };
-      G.teams.push(altTeam);
-    }
-    // Move activator and target to alternates (remove from vice team)
-    const viceTeam = G.teams.find(t => t.id === 'vice');
-    for (const sid of [activatorSeat, targetSeat]) {
-      if (!altTeam.seats.includes(sid)) altTeam.seats.push(sid);
-      if (viceTeam) viceTeam.seats = viceTeam.seats.filter(s => s !== sid);
-    }
+    // Both activator and target are unaffiliated — they form a brand-new team.
+    const newTeamId = nextAltTeamId();
+    const newTeam = { id: newTeamId, seats: [activatorSeat, targetSeat], panDoubled: false };
+    G.teams.push(newTeam);
     if (card.maId === 'Pan') {
-      altTeam.panDoubled = true;
-      G.panTeams.push('alternates');
-      addLog(`${activator.name} activates Pan — Alternates team Arrow VP doubled if Chief fails!`, true);
+      newTeam.panDoubled = true;
+      G.panTeams.push(newTeamId);
+      addLog(`${activator.name} activates Pan — new ${teamLabel(newTeam)} formed with ${target.name}, Arrow VP doubled if it wins!`, true);
     } else {
-      addLog(`${activator.name} & ${target.name} form the Alternates team!`, true);
+      addLog(`${activator.name} & ${target.name} form a new team (${teamLabel(newTeam)})!`, true);
     }
   }
 
@@ -2131,7 +2371,7 @@ function startTrickPlay() {
 
   // Build teams if not already set (e.g. 3P game — no partner selection)
   if (G.teams.length === 0) {
-    const chiefTeamSeats = [G.chiefSeat, G.partnerSeat].filter(s => s !== null && s !== undefined);
+    const chiefTeamSeats = [G.chiefSeat, G.partnerSeat, G.partnerSeat2].filter(s => s !== null && s !== undefined);
     const viceTeamSeats = G.players.map(p => p.id).filter(id => !chiefTeamSeats.includes(id));
     G.teams = [
       { id: 'chief', seats: chiefTeamSeats, panDoubled: false },
@@ -2149,77 +2389,122 @@ function countRemainingTCs() {
     sum + p.tableau.filter(c => c.isJoker && c.jokerRole === 'TC').length, 0);
 }
 
-function startNewTrick(leadSeat) {
-  G.trickNum++;
-  G.currentTrick = {
-    leadSeat,
-    round1: G.players.map(p => ({ seat: p.id, card: null })),
-    round2: G.players.map(p => ({ seat: p.id, card: null, passed: false })),
-    trickPhase: 'ROUND1',
-    currentSeat: leadSeat,
-    jokerPlayedInRound1: false, // any Joker played in Round 1 → no Round 2
-    lastTcInRound1: false,      // last TC in hand played in Round 1 → no Round 2
-    tdInRound1: false,          // TD played in Round 1 → no Round 2
-    lastTcPlayed: false,        // last TC played anywhere this trick → beats everything
-    trickClosed: false,
-    winner: null,
-  };
-  addLog(`Trick ${G.trickNum} — ${G.players.find(p=>p.id===leadSeat)?.name} leads.`);
-  advanceTrick();
+function getLedCard(t) {
+  // The first actually-played (non-skip) card in the trick, starting from leadSeat —
+  // this determines the leading suit, even if leadSeat itself somehow got skipped.
+  for (let i = 0; i < G.numPlayers; i++) {
+    const seat = (t.leadSeat + i) % G.numPlayers;
+    const slot = t.round1.find(s => s.seat === seat);
+    if (slot?.card && !slot.card.isSkip) return slot.card;
+  }
+  return null;
+}
+
+function startNewTrick(requestedLeadSeat) {
+  try {
+    // If the intended leader has no cards left, skip to the next player who does —
+    // the first player to actually play a card determines the leading suit.
+    let leadSeat = requestedLeadSeat;
+    let hops = 0;
+    while (hops < G.numPlayers) {
+      const p = G.players.find(pl => pl.id === leadSeat);
+      if (p && (p.hand.length > 0 || p.tableau.length > 0)) break;
+      leadSeat = (leadSeat + 1) % G.numPlayers;
+      hops++;
+    }
+
+    G.trickNum++;
+    G.currentTrick = {
+      leadSeat,
+      round1: G.players.map(p => ({ seat: p.id, card: null })),
+      round2: G.players.map(p => ({ seat: p.id, card: null, passed: false })),
+      trickPhase: 'ROUND1',
+      currentSeat: leadSeat,
+      jokerPlayedInRound1: false, // any Joker played in Round 1 → no Round 2
+      lastTcInRound1: false,      // last TC in hand played in Round 1 → no Round 2
+      tdInRound1: false,          // TD played in Round 1 → no Round 2
+      lastTcPlayed: false,        // last TC played anywhere this trick → beats everything
+      trickClosed: false,
+      winner: null,
+    };
+    addLog(`Trick ${G.trickNum} — ${G.players.find(p=>p.id===leadSeat)?.name} leads.`);
+    advanceTrick();
+  } catch (err) {
+    logError('startNewTrick', err);
+  }
 }
 
 function advanceTrick() {
-  const t = G.currentTrick;
-  if (!t) return;
-  if (t.trickClosed) { resolveTrick(); return; }
+  try {
+    const t = G.currentTrick;
+    if (!t) return;
+    if (t.trickClosed) { resolveTrick(); return; }
 
-  if (t.trickPhase === 'ROUND1') {
-    const allPlayed = t.round1.every(s => s.card !== null);
-    if (allPlayed) {
-      // No Round 2 if: any Joker played in Round 1, OR no Jokers remain in any tableau
-      const anyJokersLeft = G.players.some(p => p.tableau.some(c => c.isJoker));
-      const noRound2 = t.jokerPlayedInRound1 || !anyJokersLeft;
-      if (noRound2) { resolveTrick(); return; }
-      t.trickPhase = 'ROUND2';
-      t.currentSeat = t.leadSeat;
-      advanceTrick();
-      return;
-    }
-
-    const seat = t.currentSeat;
-    const player = G.players.find(p => p.id === seat);
-    if (!player) { resolveTrick(); return; }
-
-    if (player.type === 'AI') {
-      const gen = _generation;
-      setTimeout(() => { if (gen !== _generation) return; aiPlayRound1(seat); render(); }, 600);
-    } else {
-      G.awaitingHumanAction = true;
-      render();
-    }
-  } else {
-    const allDone = t.round2.every(s => s.card !== null || s.passed);
-    if (allDone || t.trickClosed) { resolveTrick(); return; }
-
-    const seat = t.currentSeat;
-    const player = G.players.find(p => p.id === seat);
-    if (!player) { resolveTrick(); return; }
-    if (player.type === 'AI') {
-      const gen = _generation;
-      setTimeout(() => { if (gen !== _generation) return; aiPlayRound2(seat); render(); }, 500);
-    } else {
-      const humanPlayer = G.players.find(p => p.id === seat);
-      const r1slot = t.round1.find(s => s.seat === seat);
-      const playedJokerInR1 = r1slot?.card?.isJoker;
-      const hasTableauJoker = humanPlayer?.tableau.some(c => c.isJoker);
-      const canPlayJoker = hasTableauJoker && !playedJokerInR1;
-      if (!canPlayJoker) {
-        passRound2(seat);
+    if (t.trickPhase === 'ROUND1') {
+      const allPlayed = t.round1.every(s => s.card !== null);
+      if (allPlayed) {
+        // No Round 2 if: any Joker played in Round 1, OR no Jokers remain in any tableau
+        const anyJokersLeft = G.players.some(p => p.tableau.some(c => c.isJoker));
+        const noRound2 = t.jokerPlayedInRound1 || !anyJokersLeft;
+        if (noRound2) { resolveTrick(); return; }
+        t.trickPhase = 'ROUND2';
+        t.currentSeat = t.leadSeat;
+        advanceTrick();
         return;
       }
-      G.awaitingHumanAction = true;
-      render();
+
+      const seat = t.currentSeat;
+      const player = G.players.find(p => p.id === seat);
+      if (!player) { resolveTrick(); return; }
+
+      if (player.hand.length === 0 && player.tableau.length === 0) {
+        const slot = t.round1.find(s => s.seat === seat);
+        if (slot) slot.card = { id: -seat - 8000, isSkip: true, cat: 'Neutral', iVP: 0, eVP: 0 };
+        addLog(`${player.name} has no cards remaining — skipped.`);
+        t.currentSeat = (seat + 1) % G.numPlayers;
+        advanceTrick();
+        return;
+      }
+
+      if (player.type === 'AI') {
+        const gen = _generation;
+        addLog(`[debug] scheduling R1 turn: seat=${seat} (${player.name}) gen=${gen}`);
+        setTimeout(() => {
+          addLog(`[debug] R1 timer fired: seat=${seat} gen=${gen} curGen=${_generation} match=${gen===_generation} trickPhase=${G.currentTrick?.trickPhase} curSeat=${G.currentTrick?.currentSeat}`);
+          if (gen !== _generation) return;
+          aiPlayRound1(seat);
+          render();
+        }, 600);
+      } else {
+        G.awaitingHumanAction = true;
+        render();
+      }
+    } else {
+      const allDone = t.round2.every(s => s.card !== null || s.passed);
+      if (allDone || t.trickClosed) { resolveTrick(); return; }
+
+      const seat = t.currentSeat;
+      const player = G.players.find(p => p.id === seat);
+      if (!player) { resolveTrick(); return; }
+      if (player.type === 'AI') {
+        const gen = _generation;
+        setTimeout(() => { if (gen !== _generation) return; aiPlayRound2(seat); render(); }, 500);
+      } else {
+        const humanPlayer = G.players.find(p => p.id === seat);
+        const r1slot = t.round1.find(s => s.seat === seat);
+        const playedJokerInR1 = r1slot?.card?.isJoker;
+        const hasTableauJoker = humanPlayer?.tableau.some(c => c.isJoker);
+        const canPlayJoker = hasTableauJoker && !playedJokerInR1;
+        if (!canPlayJoker) {
+          passRound2(seat);
+          return;
+        }
+        G.awaitingHumanAction = true;
+        render();
+      }
     }
+  } catch (err) {
+    logError('advanceTrick', err);
   }
 }
 
@@ -2234,8 +2519,7 @@ function getFollowSuitLegalCards(seat) {
     ...player.tableau.filter(c => !c.isJoker),
   ];
 
-  const leadSlot = t.round1.find(s => s.seat === t.leadSeat);
-  const ledCard = leadSlot?.card;
+  const ledCard = getLedCard(t);
   if (!ledCard) return allPlayable;
 
   const ledIsTrump = isTrump(ledCard);
@@ -2287,7 +2571,7 @@ function playRound1Card(seat, card) {
     player.handVP += starVP;
     player.starsPlayed = (player.starsPlayed || 0) + starVP;
     if (card.dualVP) {
-      const suffix = card.eVP > 0 ? ` +${card.eVP}▲ (end of hand)` : ` ${card.eVP}☠ (end of hand)`;
+      const suffix = card.eVP > 0 ? ` +${card.eVP}▲ (end of hand)` : ` ${card.eVP}☢ (end of hand)`;
       addLog(`${player.name} plays ${card.face} of ${card.suit} — +${starVP}★${suffix}`);
     } else {
       addLog(`${player.name} plays ${card.face} of ${card.suit} — +${starVP}★`);
@@ -2343,11 +2627,42 @@ function playRound2Joker(seat, card) {
       t.lastTcCardId = card.id;
       t.trickClosed = true;
       addLog(`${player.name} plays last TC — wins trick!`, true);
-    } else {
-      addLog(`${player.name} plays TC in Joker round.`);
+      G.awaitingHumanAction = false;
+      G.selectedCards = [];
+      advanceRound2Turn(seat);
+      return;
+    }
+
+    addLog(`${player.name} plays TC in Joker round.`);
+
+    // Offer a reactive TD-counter to any player who still holds an unplayed TD
+    // (whether they already passed this Round2, or haven't gone yet)
+    const queue = findCounterCandidates(t, seat, 'TD');
+    if (queue.length > 0) {
+      t.counterQueue = queue;
+      t.counterAgainstSeat = seat;
+      t.counterRole = 'TD';
+      G.awaitingHumanAction = false;
+      G.selectedCards = [];
+      advanceCounterPhase();
+      return;
     }
   } else {
-    // TD — closes the trick
+    // TD — normally closes the trick, unless exactly one TC remains in a still-eligible player's hand
+    const remainingTCs = countRemainingTCs();
+    if (remainingTCs === 1) {
+      const queue = findCounterCandidates(t, seat, 'TC');
+      if (queue.length > 0) {
+        addLog(`${player.name} plays TD in Joker round.`);
+        t.counterQueue = queue;
+        t.counterAgainstSeat = seat;
+        t.counterRole = 'TC';
+        G.awaitingHumanAction = false;
+        G.selectedCards = [];
+        advanceCounterPhase();
+        return;
+      }
+    }
     t.trickClosed = true;
     addLog(`${player.name} plays TD — trick closed!`, true);
   }
@@ -2357,34 +2672,157 @@ function playRound2Joker(seat, card) {
   advanceRound2Turn(seat);
 }
 
+function findCounterCandidates(t, againstSeat, jokerRole) {
+  const queue = [];
+  for (let i = 1; i <= G.numPlayers; i++) {
+    const candSeat = (againstSeat + i) % G.numPlayers;
+    if (candSeat === againstSeat) continue;
+    const cand = G.players.find(p => p.id === candSeat);
+    if (!cand) continue;
+    const r1 = t.round1.find(s => s.seat === candSeat);
+    if (r1?.card?.isJoker) continue; // played a Joker in Round 1 — ineligible
+    const r2 = t.round2.find(s => s.seat === candSeat);
+    if (r2?.card || r2?.passed) continue; // already substituted or already declined this trick
+    const hasCard = cand.tableau.some(c => c.isJoker && c.jokerRole === jokerRole);
+    if (!hasCard) continue;
+    queue.push(candSeat);
+  }
+  return queue;
+}
+
+function advanceCounterPhase() {
+  try {
+    const t = G.currentTrick;
+    if (!t) return;
+    if (t.trickClosed) { resolveTrick(); return; }
+
+    if (!t.counterQueue || t.counterQueue.length === 0) {
+      // No one countered — resume normal Round2 rotation from whoever played the original card
+      const resumeSeat = t.counterAgainstSeat;
+      t.counterQueue = null;
+      t.counterAgainstSeat = null;
+      t.counterRole = null;
+      advanceRound2Turn(resumeSeat);
+      return;
+    }
+
+    const seat = t.counterQueue[0];
+    const player = G.players.find(p => p.id === seat);
+    if (!player) { t.counterQueue.shift(); advanceCounterPhase(); return; }
+
+    t.currentSeat = seat; // so existing UI wiring reflects whose reactive decision this is
+
+    if (player.type === 'AI') {
+      const gen = _generation;
+      setTimeout(() => {
+        if (gen !== _generation) return;
+        if (!G.currentTrick || !G.currentTrick.counterQueue || G.currentTrick.counterQueue[0] !== seat) return;
+        aiCounterDecision(seat);
+        render();
+      }, 600);
+    } else {
+      G.awaitingHumanAction = true;
+      render();
+    }
+  } catch (err) {
+    logError('advanceCounterPhase', err);
+  }
+}
+
+function aiCounterDecision(seat) {
+  try {
+    const t = G.currentTrick;
+    if (!t || !t.counterQueue || t.counterQueue[0] !== seat) return;
+    const player = G.players.find(p => p.id === seat);
+    if (!player) { t.counterQueue.shift(); advanceCounterPhase(); return; }
+    const againstSeat = t.counterAgainstSeat;
+    const role = t.counterRole;
+
+    const isTeammate = (s) => {
+      if (G.teams.length > 0) {
+        const myTeam = G.teams.find(tm => tm.seats.includes(seat));
+        return myTeam ? myTeam.seats.includes(s) : false;
+      }
+      return false;
+    };
+    const isOpponent = !isTeammate(againstSeat);
+
+    const trickArrowVP = t.round1.reduce((sum, s) => {
+      if (!s.card || s.card.isSkip) return sum;
+      return sum + (s.card.eVP > 0 ? s.card.eVP : 0);
+    }, 0);
+
+    if (isOpponent && trickArrowVP >= 4) {
+      const counterCard = player.tableau.find(c => c.isJoker && c.jokerRole === role);
+      if (counterCard) {
+        t.counterQueue.shift();
+        playRound2Joker(seat, counterCard);
+        return;
+      }
+    }
+
+    counterDecline(seat);
+  } catch (err) {
+    logError('aiCounterDecision', err);
+  }
+}
+
+function counterDecline(seat) {
+  try {
+    const t = G.currentTrick;
+    if (!t) return;
+    const r2slot = t.round2.find(s => s.seat === seat);
+    if (r2slot) r2slot.passed = true;
+    G.awaitingHumanAction = false;
+    addLog(`${G.players.find(p => p.id === seat)?.name} declines to counter with ${t.counterRole}.`);
+    if (t.counterQueue && t.counterQueue[0] === seat) t.counterQueue.shift();
+    advanceCounterPhase();
+  } catch (err) {
+    logError('counterDecline', err);
+  }
+}
+
 function passRound2(seat) {
-  const t = G.currentTrick;
-  const r2slot = t.round2.find(s => s.seat === seat);
-  if (r2slot) r2slot.passed = true;
-  G.awaitingHumanAction = false;
-  G.selectedCards = [];
-  addLog(`${G.players.find(p=>p.id===seat)?.name} passes in Joker round.`);
-  advanceRound2Turn(seat);
+  try {
+    const t = G.currentTrick;
+    if (!t) return;
+    const r2slot = t.round2.find(s => s.seat === seat);
+    if (r2slot) r2slot.passed = true;
+    G.awaitingHumanAction = false;
+    G.selectedCards = [];
+    addLog(`${G.players.find(p=>p.id===seat)?.name} passes in Joker round.`);
+    advanceRound2Turn(seat);
+  } catch (err) {
+    logError('passRound2', err);
+  }
 }
 
 function advanceRound2Turn(seat) {
-  const t = G.currentTrick;
-  if (t.trickClosed) { resolveTrick(); return; }
-  t.currentSeat = (seat + 1) % G.numPlayers;
-  if (t.currentSeat === t.leadSeat) {
-    resolveTrick();
-  } else {
-    advanceTrick();
+  try {
+    const t = G.currentTrick;
+    if (!t) return;
+    if (t.trickClosed) { resolveTrick(); return; }
+    t.currentSeat = (seat + 1) % G.numPlayers;
+    if (t.currentSeat === t.leadSeat) {
+      resolveTrick();
+    } else {
+      advanceTrick();
+    }
+  } catch (err) {
+    logError('advanceRound2Turn', err);
   }
 }
 
 function aiPlayRound1(seat) {
-  if (G.phase !== 'TRICK_PLAY' || !G.currentTrick) return;
-  if (G.currentTrick.trickPhase !== 'ROUND1') return;
-  if (G.currentTrick.currentSeat !== seat) return;
+  addLog(`[debug] aiPlayRound1 invoked: seat=${seat} phase=${G.phase} trickPhase=${G.currentTrick?.trickPhase} curSeat=${G.currentTrick?.currentSeat}`);
+  if (G.phase !== 'TRICK_PLAY' || !G.currentTrick) { addLog(`[debug] aiPlayRound1 bailed: bad phase/no trick`, true); return; }
+  if (G.currentTrick.trickPhase !== 'ROUND1') { addLog(`[debug] aiPlayRound1 bailed: not ROUND1`, true); return; }
+  if (G.currentTrick.currentSeat !== seat) { addLog(`[debug] aiPlayRound1 bailed: seat mismatch (expected ${G.currentTrick.currentSeat}, got ${seat})`, true); return; }
   const player = G.players.find(p => p.id === seat);
-  if (!player) return;
+  if (!player) { addLog(`[debug] aiPlayRound1 bailed: no player found for seat ${seat}`, true); return; }
   const t = G.currentTrick;
+
+  try {
 
   const legal = getFollowSuitLegalCards(seat);
 
@@ -2399,44 +2837,64 @@ function aiPlayRound1(seat) {
   }
 
   // Check if we're following suit/trump or playing off-suit
-  const leadSlot = t.round1.find(s => s.seat === t.leadSeat);
-  const ledCard = leadSlot?.card;
+  const ledCard = getLedCard(t);
   const mustFollowSuit = ledCard && legal.some(c =>
     isTrump(ledCard) ? isTrump(c) : (c.suit === ledCard.suit && !isTrump(c))
   );
 
-  if (mustFollowSuit) {
-    // Following suit — play highest trump or highest of led suit
-    const chosen = [...legal].sort((a,b) => b.rank - a.rank)[0];
-    playRound1Card(seat, chosen);
-    return;
-  }
-
-  // Off-suit discard — determine if current trick winner is teammate or opponent
+  // Determine if current trick winner (among cards played so far) is a teammate or opponent
   const isTeammate = (s) => {
     if (G.teams.length > 0) {
       const myTeam = G.teams.find(t => t.seats.includes(seat));
       return myTeam ? myTeam.seats.includes(s) : false;
     }
     if (G.partnerSeat !== null) {
-      const myTeam = seat === G.chiefSeat || seat === G.partnerSeat;
-      const theirTeam = s === G.chiefSeat || s === G.partnerSeat;
+      const myTeam = seat === G.chiefSeat || seat === G.partnerSeat || seat === G.partnerSeat2;
+      const theirTeam = s === G.chiefSeat || s === G.partnerSeat || s === G.partnerSeat2;
       return myTeam === theirTeam;
     }
     return false;
   };
 
-  // Find current trick winner among cards played so far
-  let currentWinner = t.leadSeat;
-  let winCard = leadSlot?.card;
+  let currentWinner = null;
+  let winCard = null;
   for (const slot of t.round1) {
-    if (!slot.card) continue;
-    if (beatsCard(slot.card, winCard, ledCard)) {
+    if (!slot.card || slot.card.isSkip) continue;
+    if (winCard === null || beatsCard(slot.card, winCard, ledCard)) {
       currentWinner = slot.seat;
       winCard = slot.card;
     }
   }
+  if (currentWinner === null) currentWinner = t.leadSeat; // safety: no cards played yet
   const winnerIsTeammate = isTeammate(currentWinner);
+
+  if (mustFollowSuit) {
+    if (winnerIsTeammate) {
+      // Teammate winning — prefer the highest-value Arrow VP card among legal follow-suit options
+      // (still contests the trick; feeds max Arrow VP to our team either way).
+      const arrowsLegal = legal.filter(c => c.cat === 'Arrow');
+      const chosen = arrowsLegal.length > 0
+        ? arrowsLegal.sort((a,b) => (b.eVP - a.eVP) || (b.rank - a.rank))[0]
+        : [...legal].sort((a,b) => b.rank - a.rank)[0];
+      playRound1Card(seat, chosen);
+      return;
+    } else {
+      // Opponent winning — only bother beating them if we actually can
+      const winners = legal.filter(c => beatsCard(c, winCard, ledCard));
+      if (winners.length > 0) {
+        const chosen = winners.sort((a,b) => b.rank - a.rank)[0];
+        playRound1Card(seat, chosen);
+        return;
+      } else {
+        // Can't win this trick — avoid Arrow VP cards (rank 5s included), play lowest available.
+        // Stars are safe (banked immediately, unaffected by trick outcome).
+        const nonArrow = legal.filter(c => c.cat !== 'Arrow');
+        const chosen = (nonArrow.length > 0 ? nonArrow : legal).sort((a,b) => a.rank - b.rank)[0];
+        playRound1Card(seat, chosen);
+        return;
+      }
+    }
+  }
 
   // Strategic discard priority
   const skulls  = legal.filter(c => c.cat === 'Skull');
@@ -2446,10 +2904,11 @@ function aiPlayRound1(seat) {
 
   let chosen;
   if (!winnerIsTeammate) {
-    // Opponent winning — dump Skulls on them, then Arrows (don't give away Stars)
+    // Opponent winning — dump Skulls on them first, then Neutrals (no VP value).
+    // Only surrender an Arrow as a last resort (avoid feeding opponent Arrow VP), never give away Stars.
     chosen = skulls.sort((a,b) => b.rank - a.rank)[0]
-          || arrows.sort((a,b) => b.rank - a.rank)[0]
           || neutral.sort((a,b) => a.rank - b.rank)[0]
+          || arrows.sort((a,b) => a.rank - b.rank)[0]
           || stars.sort((a,b) => a.rank - b.rank)[0];
   } else {
     // Teammate winning
@@ -2477,6 +2936,10 @@ function aiPlayRound1(seat) {
     return;
   }
   playRound1Card(seat, chosen);
+
+  } catch (err) {
+    logError('aiPlayRound1', err);
+  }
 }
 
 function aiPlayRound2(seat) {
@@ -2486,6 +2949,8 @@ function aiPlayRound2(seat) {
   const t = G.currentTrick;
   const player = G.players.find(p => p.id === seat);
   if (!player) return;
+
+  try {
 
   if (t.trickClosed) { passRound2(seat); return; }
 
@@ -2497,7 +2962,7 @@ function aiPlayRound2(seat) {
 
   const td = jokers.find(j => j.jokerRole === 'TD');
   const tc = jokers.find(j => j.jokerRole === 'TC');
-  const isChiefTeam = seat === G.chiefSeat || seat === G.partnerSeat;
+  const isChiefTeam = seat === G.chiefSeat || seat === G.partnerSeat || seat === G.partnerSeat2;
   const trickValue = t.round1.reduce((sum, s) => {
     if (!s.card) return sum;
     return sum + (s.card.cat === 'Star' ? 5 : s.card.cat === 'Arrow' ? 3 : 0);
@@ -2512,23 +2977,30 @@ function aiPlayRound2(seat) {
     playRound2Joker(seat, td); return;
   }
   passRound2(seat);
+
+  } catch (err) {
+    logError('aiPlayRound2', err);
+  }
 }
 
 function resolveTrick() {
   const t = G.currentTrick;
   if (!t) return;
 
-  const leadSlot = t.round1.find(s => s.seat === t.leadSeat);
-  let winner = t.leadSeat;
-  let winCard = leadSlot?.card || null;
+  try {
+
+  const ledCard = getLedCard(t);
+  let winner = null;
+  let winCard = null;
 
   for (const slot of t.round1) {
-    if (!slot.card) continue;
-    if (beatsCard(slot.card, winCard, leadSlot?.card)) {
+    if (!slot.card || slot.card.isSkip) continue;
+    if (winCard === null || beatsCard(slot.card, winCard, ledCard)) {
       winner = slot.seat;
       winCard = slot.card;
     }
   }
+  if (winner === null) winner = t.leadSeat; // safety: no cards played at all (shouldn't happen)
 
   t.winner = winner;
   const capturedCards = t.round1.map(s => s.card).filter(c => c && !c.isSkip);
@@ -2541,17 +3013,31 @@ function resolveTrick() {
   addLog(`${winnerPlayer?.name} wins trick ${G.trickNum}.`, true);
 
   const anyCards = G.players.some(p => p.hand.length > 0 || p.tableau.length > 0);
-  G.currentTrick = null;
-  G.selectedCards = [];
+  render();
 
   const gen = _generation;
-  if (!anyCards) {
-    render();
-    setTimeout(() => { if (gen !== _generation) return; scoreHand(); }, 2500);
-  } else {
-    const nextLead = (G.useMA && G.maEffects?._nextLeadSeat !== undefined) ? G.maEffects._nextLeadSeat : winner;
-    if (G.maEffects) delete G.maEffects._nextLeadSeat;
-    setTimeout(() => { if (gen !== _generation) return; startNewTrick(nextLead); render(); }, 800);
+  setTimeout(() => {
+    if (gen !== _generation) return;
+    try {
+      G.currentTrick = null;
+      G.selectedCards = [];
+      if (!anyCards) {
+        render();
+        scoreHand();
+      } else {
+        const nextLead = (G.useMA && G.maEffects?._nextLeadSeat !== undefined) ? G.maEffects._nextLeadSeat : winner;
+        if (G.maEffects) delete G.maEffects._nextLeadSeat;
+        startNewTrick(nextLead);
+        render();
+      }
+    } catch (err) {
+      logError('resolveTrick (delayed continuation)', err);
+      render();
+    }
+  }, 3000);
+
+  } catch (err) {
+    logError('resolveTrick', err);
   }
 }
 
@@ -2838,7 +3324,7 @@ function scoreHand() {
   // Use G.teams if available, otherwise build standard structure
   // For 3P games partnerSeat is null — all non-Chief players are on Vice team
   if (G.teams.length === 0) {
-    const chiefTeamSeatsDefault = [chiefSeat, partnerSeat].filter(s => s !== null && s !== undefined);
+    const chiefTeamSeatsDefault = [chiefSeat, partnerSeat, G.partnerSeat2].filter(s => s !== null && s !== undefined);
     const viceTeamSeatsDefault = G.players.map(p => p.id).filter(id => !chiefTeamSeatsDefault.includes(id));
     G.teams = [
       { id: 'chief', seats: chiefTeamSeatsDefault, panDoubled: false },
@@ -2849,7 +3335,7 @@ function scoreHand() {
 
   // Chief's team seats for goal tally
   const chiefTeam = teams.find(t => t.id === 'chief');
-  const chiefTeamSeats = chiefTeam?.seats || [chiefSeat, partnerSeat].filter(Boolean);
+  const chiefTeamSeats = chiefTeam?.seats || [chiefSeat, partnerSeat, G.partnerSeat2].filter(Boolean);
 
   // Goal tally = sum of Arrow VP captured by Chief's team
   const teamArrowTally = chiefTeamSeats.reduce((sum, seat) => sum + (arrowVP[seat] || 0), 0);
@@ -2868,18 +3354,28 @@ function scoreHand() {
     }
     teamResults.push({ teamId: 'chief', seats: chiefTeamSeats, award, panDoubled: chiefTeam?.panDoubled });
   } else {
-    // Chief fails — all other teams score their own combined arrows; solo players score nothing
+    // Chief fails — only the single non-Chief team with the highest combined
+    // Arrow VP scores (every member gets that team's full total); everyone
+    // else, including all other non-Chief teams and Solo players, scores nothing.
+    let bestTeam = null, bestSeats = null, bestArrows = -1;
     for (const team of teams) {
       if (team.id === 'chief') continue;
       const nonSoloSeats = team.seats.filter(id => !G.soloSeats.includes(id));
       if (nonSoloSeats.length === 0) continue;
       const teamArrows = nonSoloSeats.reduce((s, id) => s + (arrowVP[id] || 0), 0);
-      const award = team.panDoubled ? teamArrows * 2 : teamArrows;
-      for (const seat of nonSoloSeats) {
+      if (teamArrows > bestArrows) {
+        bestArrows = teamArrows;
+        bestTeam = team;
+        bestSeats = nonSoloSeats;
+      }
+    }
+    if (bestTeam) {
+      const award = bestTeam.panDoubled ? bestArrows * 2 : bestArrows;
+      for (const seat of bestSeats) {
         const p = G.players.find(pl => pl.id === seat);
         if (p) { p.vpTotal += award; p.handVP += award; }
       }
-      teamResults.push({ teamId: team.id, seats: nonSoloSeats, award, panDoubled: team.panDoubled });
+      teamResults.push({ teamId: bestTeam.id, seats: bestSeats, award, panDoubled: bestTeam.panDoubled });
     }
   }
 
@@ -2887,7 +3383,9 @@ function scoreHand() {
   const arrowWinners = teamResults.flatMap(t => t.seats);
   const totalArrowVP = teamResults.length > 0 ? teamResults[0].award : 0;
 
-  showScoringModal({ teamArrowTally, goal, goalMet, endVP, arrowVP, skullVP, arrowWinners, totalArrowVP, bidCount, teamResults, teams });
+  const scoringSummary = { teamArrowTally, goal, goalMet, endVP, arrowVP, skullVP, arrowWinners, totalArrowVP, bidCount, teamResults, teams };
+  G.lastScoringSummary = scoringSummary; // stored so it survives the network round-trip to clients
+  showScoringModal(scoringSummary);
 }
 
 function showScoringModal(s) {
@@ -2902,12 +3400,13 @@ function showScoringModal(s) {
     // Find team
     const team = (s.teams || []).find(t => t.seats.includes(p.id));
     if (team?.id === 'chief') return 'Partner';
-    if (team?.id === 'alternates') return 'Alt';
+    if (team?.id === 'vice') return 'VPartner';
+    if (team?.id) return `Alt (${team.id})`;
     return 'VPartner';
   };
 
   let html = `<table class="scoring-table">
-    <tr><th>Player</th><th>Role</th><th>★ Played</th><th>▲ Award</th><th>☠ Penalty</th><th>Total</th></tr>`;
+    <tr><th>Player</th><th>Role</th><th>★ Played</th><th>▲ Award</th><th>☢ Radioactive</th><th>Total</th></tr>`;
 
   for (const p of G.players) {
     const role = roleName(p);
@@ -2950,9 +3449,19 @@ function showScoringModal(s) {
     { label: winner ? `🏆 Game Over — ${winner.name} Wins!` : 'Next Hand', fn: () => {
       closeModal();
       if (winner) {
+        G.lastWinnerSeat = winner.id;
         showGameOver(winner);
+        render();
       } else {
         G.dealer = (G.dealer + 1) % G.numPlayers;
+        G.trumpResolved = null;
+        G.chiefSeat = null;
+        G.viceSeat = null;
+        G.partnerSeat = null;
+        G.partnerSeat2 = null;
+        G.teams = [];
+        G.soloSeats = [];
+        G.panTeams = [];
         dealCards();
         if (G.useMA) {
           beginMAAuction(() => startAuction());
@@ -2989,6 +3498,7 @@ function render() {
   renderCenter();
   renderPlayerArea();
   renderActions();
+  if (NET.mode === 'host' && NET.started) netScheduleState();
 }
 
 function renderHeader() {
@@ -3010,7 +3520,7 @@ function renderOpponents() {
     // Team border — only shown once teams are known (after partner selection)
     let teamClass = '';
     if (G.partnerSeat !== null || G.chiefSeat !== null) {
-      const isChiefTeam = p.id === G.chiefSeat || p.id === G.partnerSeat;
+      const isChiefTeam = p.id === G.chiefSeat || p.id === G.partnerSeat || p.id === G.partnerSeat2;
       teamClass = isChiefTeam ? ' team-chief' : ' team-vice';
     }
     zone.className = 'opponent-zone' + teamClass;
@@ -3120,16 +3630,17 @@ function renderCenter() {
     trickCards.innerHTML = '';
     if (t) {
       // Find current trick winner for highlighting
-      const leadSlot = t.round1.find(s => s.seat === t.leadSeat);
-      let currentWinner = t.leadSeat;
-      let winCard = leadSlot?.card;
+      const ledCard = getLedCard(t);
+      let currentWinner = null;
+      let winCard = null;
       for (const slot of t.round1) {
-        if (!slot.card) continue;
-        if (beatsCard(slot.card, winCard, leadSlot?.card)) {
+        if (!slot.card || slot.card.isSkip) continue;
+        if (winCard === null || beatsCard(slot.card, winCard, ledCard)) {
           currentWinner = slot.seat;
           winCard = slot.card;
         }
       }
+      if (currentWinner === null) currentWinner = t.leadSeat;
 
       for (const slot of t.round1) {
         const slotDiv = document.createElement('div');
@@ -3139,12 +3650,20 @@ function renderCenter() {
         const tag = document.createElement('div');
         tag.className = 'player-tag';
         tag.textContent = G.players.find(p=>p.id===slot.seat)?.name || '';
-        const isChiefTeam = slot.seat === G.chiefSeat || slot.seat === G.partnerSeat;
+        const isChiefTeam = slot.seat === G.chiefSeat || slot.seat === G.partnerSeat || slot.seat === G.partnerSeat2;
         if (G.chiefSeat !== null) {
           tag.style.color = isChiefTeam ? '#1a6acc' : '#cc1a1a';
           tag.style.fontWeight = '600';
         }
         slotDiv.appendChild(tag);
+
+        // Led indicator — who played first this trick
+        if (slot.card && ledCard && slot.card.id === ledCard.id) {
+          const leadTag = document.createElement('div');
+          leadTag.style.cssText = 'font-size:0.6rem;color:var(--gold-dim);font-weight:700;text-align:center;letter-spacing:0.05em;';
+          leadTag.textContent = '🚩 Led';
+          slotDiv.appendChild(leadTag);
+        }
 
         // Winning indicator
         if (slot.seat === currentWinner && winCard) {
@@ -3320,11 +3839,22 @@ function renderPlayerArea() {
       card.title = 'Auto-selected (Joker — always bid)';
       card.classList.add('disabled');
     } else if (isMyTrickTurn && isRound2 && c.isJoker) {
-      card.onclick = () => { playRound2Joker(hs, c); render(); };
+      const inCounter = G.currentTrick?.counterQueue && G.currentTrick.counterQueue[0] === hs;
+      if (inCounter) {
+        const role = G.currentTrick.counterRole;
+        if (c.jokerRole === role) {
+          card.onclick = () => { netPlayRound2Joker(hs, c); };
+          card.title = `Play ${role} to override the current ${role === 'TD' ? 'TC' : 'TD'}`;
+        } else {
+          card.classList.add('disabled');
+        }
+      } else {
+        card.onclick = () => { netPlayRound2Joker(hs, c); };
+      }
     } else if (isMyTrickTurn && isRound1 && c.isJoker) {
-      card.onclick = () => { playRound1Card(hs, c); render(); };
+      card.onclick = () => { netPlayRound1Card(hs, c); };
     } else if (isMyTrickTurn && isRound1 && !c.isJoker && legalTableauIds.includes(c.id)) {
-      card.onclick = () => { playRound1Card(hs, c); render(); };
+      card.onclick = () => { netPlayRound1Card(hs, c); };
     } else {
       card.classList.add('disabled');
     }
@@ -3350,8 +3880,8 @@ function renderPlayerArea() {
     if (G.phase === 'AUCTION' && G.awaitingHumanAction && G.auction?.currentBidder === hs) {
       card.onclick = () => { toggleSelect(c); render(); };
     } else if (isMyTurn && isLegal) {
-      card.onclick = () => { playRound1Card(0, c); render(); };
-    } else if (G.phase === 'PARTNER_SELECTION' && G.partnerSelectPending && G.chiefSeat === 0) {
+      card.onclick = () => { netPlayRound1Card(hs, c); };
+    } else if (G.phase === 'PARTNER_SELECTION' && G.partnerSelectPending && G.chiefSeat === hs) {
       // handled in actions
     } else {
       card.classList.add('disabled');
@@ -3370,12 +3900,12 @@ function renderActions() {
   if (G.phase === 'AUCTION' && G.auction?.currentBidder === hs) {
     const hasSel = G.selectedCards.length > 0;
     const player = G.players.find(p => p.id === hs);
-    const myBid = player.tableau.length;
+    const predictedBid = player.tableau.length + G.selectedCards.length;
     const maxBid = G.auction.maxBid;
 
-    addBtn(row, 'Pass', () => { placeBid(hs, []); render(); }, 'danger');
+    addBtn(row, 'Pass', () => { netAuctionPass(hs); }, 'danger');
     if (hasSel) {
-      addBtn(row, `Bid (${G.selectedCards.length} card${G.selectedCards.length !== 1 ? 's' : ''})`, () => { humanBid(G.selectedCards, hs); render(); }, 'confirm');
+      addBtn(row, `Bid (${predictedBid} card${predictedBid !== 1 ? 's' : ''})`, () => { netAuctionBid(G.selectedCards, hs); }, 'confirm');
     }
   }
 
@@ -3393,26 +3923,31 @@ function renderActions() {
       }
       const options = getTrumpOptions(hs, step);
       for (const opt of options) {
-        addBtn(row, opt.label, () => { selectTrump(step, opt); render(); });
+        addBtn(row, opt.label, () => { netSelectTrump(step, opt); });
       }
     }
   }
 
   if (G.phase === 'PARTNER_SELECTION' && G.partnerSelectPending && G.chiefSeat === hs) {
-    const eligible = G.players.filter(p => p.id !== hs && p.id !== G.viceSeat);
+    const eligible = G.players.filter(p => p.id !== hs && p.id !== G.viceSeat && p.id !== G.partnerSeat);
     for (const p of eligible) {
-      addBtn(row, `Pick ${p.name}`, () => { selectPartner(p.id); render(); }, 'confirm');
+      addBtn(row, `Pick ${p.name}`, () => { netSelectPartner(p.id); }, 'confirm');
     }
   }
 
   if (G.phase === 'TRICK_PLAY' && G.currentTrick) {
     const t = G.currentTrick;
-    if (t.trickPhase === 'ROUND2' && t.currentSeat === hs && G.awaitingHumanAction) {
+    const inCounter = t.counterQueue && t.counterQueue[0] === hs && G.awaitingHumanAction;
+    if (inCounter) {
+      const againstPlayer = G.players.find(p => p.id === t.counterAgainstSeat);
+      const againstRole = t.counterRole === 'TD' ? 'TC' : 'TD';
+      addBtn(row, `Pass — let ${againstPlayer?.name}'s ${againstRole} win`, () => { netCounterDecline(hs); }, 'danger');
+    } else if (t.trickPhase === 'ROUND2' && t.currentSeat === hs && G.awaitingHumanAction) {
       const hasJokers = G.players.find(p => p.id === hs)?.tableau.some(c => c.isJoker);
       if (!hasJokers) {
-        addBtn(row, 'Pass (Joker Round)', () => { passRound2(hs); render(); }, 'danger');
+        addBtn(row, 'Pass (Joker Round)', () => { netPassRound2(hs); }, 'danger');
       } else {
-        addBtn(row, 'Pass (no Joker)', () => { passRound2(hs); render(); }, 'danger');
+        addBtn(row, 'Pass (no Joker)', () => { netPassRound2(hs); }, 'danger');
       }
     }
   }
@@ -3441,6 +3976,7 @@ function faceVPText(card) {
   if (card.dualVP) {
     return card.rank === 2 ? '+5\u00A0+5' : '+5\u00A0-5';
   }
+  if (card.dualArrow) return (card.eVP >= 0 ? '+' : '') + card.eVP;
   if (card.iVP > 0) return `+${card.iVP}`;
   if (card.eVP > 0) return `+${card.eVP}`;
   if (card.eVP < 0) return `${card.eVP}`;
@@ -3497,8 +4033,9 @@ function makeCard(card, selected, inTrick) {
 
   const faceVP = document.createElement('div');
   faceVP.className = 'face-vp';
-  faceVP.textContent = faceVPText(card);
-  faceVP.style.color = card.isJoker ? (card.jokerRole === 'TD' ? '#f1c40f' : '#e74c3c') : suit.text;
+  const bodyVPText = faceVPText(card);
+  faceVP.textContent = bodyVPText;
+  faceVP.style.color = bodyVPText.trim().startsWith('-') ? '#cc2222' : (bodyVPText ? '#1a5acc' : (card.isJoker ? (card.jokerRole === 'TD' ? '#f1c40f' : '#e74c3c') : suit.text));
 
   face.appendChild(faceRank);
   face.appendChild(faceIcon);
@@ -3569,14 +4106,587 @@ function showInfo(msg) {
 function addLog(msg, important) {
   G.log = G.log || [];
   G.log.unshift({ msg, important });
-  if (G.log.length > 30) G.log.pop();
+  if (G.log.length > 100) G.log.pop();
+}
+
+function logError(context, err) {
+  const msg = err && err.message ? err.message : String(err);
+  addLog(`⚠ ERROR in ${context}: ${msg}`, true);
+  console.error(`[${context}]`, err);
+}
+
+function showGameLog() {
+  const log = G.log || [];
+  if (log.length === 0) {
+    showModal('Game Log', '<div style="color:var(--text-dim);">No log entries yet.</div>', [], [
+      { label:'Close', fn: () => closeModal() }
+    ]);
+    return;
+  }
+  const rows = log.map(entry => {
+    const style = entry.important
+      ? 'font-weight:bold;color:var(--gold);'
+      : 'color:var(--text-dim);';
+    const safeMsg = String(entry.msg).replace(/</g, '&lt;').replace(/>/g, '&gt;');
+    return `<div style="${style}padding:3px 0;border-bottom:1px solid var(--border, #333);font-size:0.85rem;">${safeMsg}</div>`;
+  }).join('');
+  showModal('Game Log', `<div style="max-height:60vh;overflow-y:auto;text-align:left;">${rows}</div>`, [], [
+    { label:'Close', fn: () => closeModal() }
+  ]);
 }
 
 // ═══════════════════════════════════════════════
 // SETUP UI
 // ═══════════════════════════════════════════════
+// ══════════════════════════════════════════════
+// ONLINE MULTIPLAYER
+// ══════════════════════════════════════════════
+const NET = { mode:'local', peer:null, roomCode:null, joiners:[], hostConn:null, started:false, myName:'', seatAssign:{}, remoteBySeat:{}, mySeat:null, inGame:false, stateInterval:null };
+const NET_PREFIX = 'benmu-';
+const netEsc = s => String(s).replace(/[&<>"']/g, c=>({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+function netRoomCode(){ const A='ABCDEFGHJKLMNPQRSTUVWXYZ'; let c=''; for(let i=0;i<4;i++) c+=A[Math.floor(Math.random()*A.length)]; return c; }
+function netStatus(elId, msg, cls){ const el=document.getElementById(elId); if(!el) return; el.textContent=msg; el.className='net-status'+(cls?' '+cls:''); }
+
+function setGameMode(mode){
+  netTeardown();
+  NET.mode = mode;
+  document.getElementById('mode-local-btn').classList.toggle('selected', mode==='local');
+  document.getElementById('mode-host-btn').classList.toggle('selected', mode==='host');
+  document.getElementById('mode-join-btn').classList.toggle('selected', mode==='join');
+  document.getElementById('section-host-lobby').style.display = mode==='host' ? '' : 'none';
+  document.getElementById('section-join').style.display = mode==='join' ? '' : 'none';
+  const isJoin = mode === 'join';
+  document.getElementById('section-count').style.display = isJoin ? 'none' : '';
+  document.getElementById('section-difficulty').style.display = isJoin ? 'none' : '';
+  document.getElementById('section-target').style.display = isJoin ? 'none' : '';
+  document.getElementById('section-slots').style.display = (mode==='local') ? '' : 'none';
+  document.getElementById('section-checkboxes').style.display = isJoin ? 'none' : '';
+  document.getElementById('start-btn').style.display = isJoin ? 'none' : '';
+  document.getElementById('start-btn').textContent = mode==='host' ? 'Deal & Start' : 'Begin the Round';
+  if (mode === 'host') netInitHost();
+}
+
+function netTeardown(){
+  if (NET.peer) { try{ NET.peer.destroy(); }catch(e){} }
+  NET.peer=null; NET.hostConn=null; NET.joiners=[]; NET.roomCode=null; NET.started=false; NET.seatAssign={};
+  NET.remoteBySeat={}; NET.mySeat=null; NET.inGame=false;
+  if (NET.stateInterval){ clearInterval(NET.stateInterval); NET.stateInterval=null; }
+  document.body.classList.remove('net-client');
+  document.body.classList.remove('net-myturn');
+  const codeEl=document.getElementById('host-room-code'); if(codeEl){ codeEl.style.display='none'; codeEl.textContent=''; }
+  const hintEl=document.getElementById('host-start-hint'); if(hintEl) hintEl.style.display='none';
+  const hl=document.getElementById('host-lobby-list'); if(hl) hl.innerHTML='';
+  const jl=document.getElementById('join-lobby-list'); if(jl) jl.innerHTML='';
+  netStatus('join-status','');
+  document.getElementById('online-wait-screen')?.classList.remove('open');
+}
+
+/* ── HOST SIDE ── */
+function netInitHost(attempt){
+  if (typeof Peer === 'undefined'){
+    netStatus('net-status-host','Loading network library…');
+    window._peerRetryLoad(ok=>{
+      if (NET.mode!=='host') return;
+      if (ok) netInitHost(attempt);
+      else netStatus('net-status-host','Could not load the network library from any source — your network may be blocking CDN scripts.','err');
+    });
+    return;
+  }
+  attempt = attempt||0;
+  if (attempt > 4){ netStatus('net-status-host','Could not reserve a room code — try again later.','err'); return; }
+  const code = netRoomCode();
+  netStatus('net-status-host','① Reaching signaling service…');
+  const peer = new Peer(NET_PREFIX + code);
+  NET.peer = peer;
+  let hostSettled = false;
+  setTimeout(()=>{
+    if (!hostSettled && NET.peer===peer)
+      netStatus('net-status-host','✕ Could not reach the signaling service after 15 seconds — a browser extension, security software, or a sandboxed viewer may be blocking it. Try another browser.','err');
+  }, 15000);
+  peer.on('open', ()=>{
+    hostSettled = true;
+    NET.roomCode = code;
+    netStatus('net-status-host','① Signaling ✓ — Room open! Share this code:','ok');
+    const codeEl=document.getElementById('host-room-code');
+    codeEl.textContent = code; codeEl.style.display='';
+    const hint=document.getElementById('host-start-hint'); if(hint) hint.style.display='';
+    netRenderHostLobby();
+  });
+  peer.on('connection', conn=>{
+    conn.on('data', d=>netHostData(conn,d));
+    conn.on('close', ()=>{
+      NET.joiners = NET.joiners.filter(j=>j.conn!==conn);
+      for (const k of Object.keys(NET.seatAssign)) if (NET.seatAssign[k].conn===conn) delete NET.seatAssign[k];
+      netRenderHostLobby(); netBroadcastLobby();
+      netHandleDisconnect(conn);
+    });
+    conn.on('error', ()=>{});
+  });
+  peer.on('error', e=>{
+    hostSettled = true;
+    if (e.type==='unavailable-id'){ try{peer.destroy();}catch(_){} if(NET.peer===peer){ NET.peer=null; netInitHost(attempt+1); } }
+    else if (NET.peer===peer) netStatus('net-status-host','Network error: '+e.type,'err');
+  });
+}
+function netHostData(conn, d){
+  if (!d || typeof d!=='object') return;
+  if (d.t==='hello'){
+    if (NET.joiners.some(j=>j.conn===conn)) return;
+    const name = String(d.name||'Friend').slice(0,20).trim() || 'Friend';
+    const j = { name, conn };
+    NET.joiners.push(j);
+    netPlaceUnseated();
+    netRenderHostLobby(); netBroadcastLobby();
+  }
+  else if (d.t==='intent'){
+    const seat = netSeatOfConn(conn);
+    if (seat===null) return;
+    netApplyIntent(seat, d);
+  }
+}
+function netSeatOfConn(conn){
+  for (const k of Object.keys(NET.remoteBySeat)) if (NET.remoteBySeat[k]===conn) return +k;
+  return null;
+}
+// Called when a remote connection closes mid-game — hand that seat to AI rather than
+// stalling the game waiting for input that will never arrive (no reconnect path yet).
+function netHandleDisconnect(conn){
+  if (!NET.started || !G || !G.numPlayers) return;
+  const seatStr = Object.keys(NET.remoteBySeat).find(k => NET.remoteBySeat[k]===conn);
+  if (seatStr===undefined) return;
+  const seat = +seatStr;
+  delete NET.remoteBySeat[seat];
+  const player = G.players.find(p=>p.id===seat);
+  if (!player) return;
+  player.type = 'AI';
+  addLog(player.name+' disconnected — AI is taking over their seat.', true);
+
+  // If the game was actively waiting on this exact seat's action, resume immediately
+  // rather than leaving it stalled — re-entering the phase's own dispatcher now
+  // correctly routes through the AI path since player.type is already updated above.
+  if (G.awaitingHumanAction) {
+    if (G.phase === 'AUCTION' && G.auction?.currentBidder === seat) {
+      advanceAuction();
+    } else if (G.phase === 'TRUMP_SELECTION') {
+      const step = G.trumpSelectStep;
+      const activeSeat = step === 'vice' ? G.viceSeat : G.chiefSeat;
+      if (activeSeat === seat) {
+        const gen = _generation;
+        setTimeout(() => { if (gen !== _generation) return; aiSelectTrump(seat, step); render(); }, 800);
+      }
+    } else if (G.phase === 'PARTNER_SELECTION' && G.partnerSelectPending && G.chiefSeat === seat) {
+      if (G.partnerSeat === null) {
+        const gen = _generation;
+        const eligible = G.players.filter(p => p.id !== G.chiefSeat && p.id !== G.viceSeat);
+        setTimeout(() => {
+          if (gen !== _generation) return;
+          if (eligible.length === 0) { startTrickPlay(); render(); return; }
+          const sorted = [...eligible].sort(comparePartners);
+          selectPartner(sorted[0].id);
+          render();
+        }, 800);
+      } else {
+        promptSecondPartner();
+      }
+    } else if (G.phase === 'PREDEAL_MA' && G.preDealMAOrder[G.preDealMAIdx] === seat) {
+      advancePreDealMA();
+    } else if (G.currentTrick && G.currentTrick.currentSeat === seat) {
+      if (G.currentTrick.counterQueue && G.currentTrick.counterQueue[0] === seat) {
+        advanceCounterPhase();
+      } else {
+        advanceTrick();
+      }
+    }
+  }
+  render();
+}
+function netSeatedJoiners(){ return new Set(Object.values(NET.seatAssign)); }
+function netPlaceUnseated(){
+  const n = setupPlayerCount;
+  for (const k of Object.keys(NET.seatAssign)) if (+k >= n) delete NET.seatAssign[k];
+  for (const k of Object.keys(NET.seatAssign)) if (!NET.joiners.includes(NET.seatAssign[k])) delete NET.seatAssign[k];
+  const seated = netSeatedJoiners();
+  for (const j of NET.joiners){
+    if (seated.has(j)) continue;
+    for (let seat=1; seat<n; seat++){
+      if (!NET.seatAssign[seat]){ NET.seatAssign[seat]=j; seated.add(j); break; }
+    }
+  }
+}
+function netSeatMove(seat, dir){
+  if (NET.started) return;
+  const n = setupPlayerCount;
+  const target = seat + dir;
+  if (target < 1 || target >= n) return;
+  const a = NET.seatAssign[seat], b = NET.seatAssign[target];
+  if (a) NET.seatAssign[target] = a; else delete NET.seatAssign[target];
+  if (b) NET.seatAssign[seat] = b; else delete NET.seatAssign[seat];
+  netRenderHostLobby(); netBroadcastLobby();
+}
+function netLobbyMsg(){
+  const n = setupPlayerCount;
+  const seats = []; for (let i=1;i<n;i++) seats.push(NET.seatAssign[i] ? NET.seatAssign[i].name : null);
+  const seated = netSeatedJoiners();
+  return { t:'lobby', code:NET.roomCode, numPlayers:n,
+    hostName: document.getElementById('player-name-input')?.value.trim()||'Host',
+    seats, unseated: NET.joiners.filter(j=>!seated.has(j)).map(j=>j.name), started: NET.started };
+}
+function netBroadcast(msg){ NET.joiners.forEach(j=>{ try{ j.conn.send(msg); }catch(e){} }); }
+function netBroadcastLobby(){ netBroadcast(netLobbyMsg()); }
+function netRenderHostLobby(){
+  const el=document.getElementById('host-lobby-list'); if(!el) return;
+  const n = setupPlayerCount;
+  const hostName = document.getElementById('player-name-input')?.value.trim()||'Host';
+  let html = `<div class="net-lobby-row me"><span class="seat-num">1</span><span class="who">${netEsc(hostName)} (you)</span><span class="tag">👑 Host</span></div>`;
+  for (let i=1;i<n;i++){
+    const j = NET.seatAssign[i];
+    html += j
+      ? `<div class="net-lobby-row"><span class="seat-num">${i+1}</span><span class="who">${netEsc(j.name)}</span><span class="tag">👤 Seated</span>
+          <button class="net-seat-move" onclick="netSeatMove(${i},-1)">↑</button><button class="net-seat-move" onclick="netSeatMove(${i},1)">↓</button></div>`
+      : `<div class="net-lobby-row open-seat"><span class="seat-num">${i+1}</span><span class="who">Open seat</span><span class="tag">🤖 AI if empty</span></div>`;
+  }
+  const seated = netSeatedJoiners();
+  NET.joiners.filter(j=>!seated.has(j)).forEach(j=>{
+    html += `<div class="net-lobby-row open-seat"><span class="seat-num">—</span><span class="who">${netEsc(j.name)}</span><span class="tag">No seat yet</span></div>`;
+  });
+  el.innerHTML = html;
+}
+
+/* ── CLIENT SIDE ── */
+function joinRoom(attempt){
+  attempt = attempt || 1;
+  if (typeof Peer === 'undefined'){
+    netStatus('join-status','Loading network library…');
+    window._peerRetryLoad(ok=>{
+      if (NET.mode!=='join') return;
+      if (ok) joinRoom(attempt);
+      else netStatus('join-status','Could not load the network library from any source — your network may be blocking CDN scripts.','err');
+    });
+    return;
+  }
+  const name = (document.getElementById('player-name-input').value||'').trim() || 'Friend';
+  const code = (document.getElementById('join-code-input').value||'').trim().toUpperCase();
+  if (!/^[A-Z]{4}$/.test(code)){ netStatus('join-status','Room code is 4 letters (e.g. KWPX).','err'); return; }
+  netTeardown(); NET.mode='join'; NET.myName=name;
+  let stage = 1, settled = false;
+  netStatus('join-status','① Reaching signaling service…' + (attempt>1?' (attempt '+attempt+' of 2)':''));
+  const peer = new Peer();
+  NET.peer = peer;
+  setTimeout(()=>{
+    if (settled || NET.peer!==peer) return;
+    if (attempt < 2){
+      netStatus('join-status','Timed out — retrying automatically…','err');
+      setTimeout(()=>{ if (NET.peer===peer && !settled) joinRoom(attempt+1); }, 800);
+    } else if (stage===1){
+      netStatus('join-status','✕ Could not reach the signaling service after 2 attempts — a browser extension, security software, or a sandboxed viewer may be blocking it.','err');
+    } else {
+      netStatus('join-status','① Signaling ✓ → ✕ but the link to the host failed — the free relay service may be degraded, or a firewall is blocking peer connections.','err');
+    }
+  }, 15000);
+  peer.on('open', ()=>{
+    if (NET.peer!==peer) return;
+    stage = 2;
+    netStatus('join-status','① Signaling ✓ → ② Contacting room '+code+'…');
+    const conn = peer.connect(NET_PREFIX+code, {reliable:true});
+    NET.hostConn = conn;
+    conn.on('open', ()=>{ settled = true; conn.send({t:'hello', name}); netStatus('join-status','② Linked ✓ → ③ Connected! Waiting in lobby…','ok'); });
+    conn.on('data', d=>netClientData(d));
+    conn.on('close', ()=>{ settled = true; netStatus('join-status','Disconnected from host.','err'); document.getElementById('online-wait-screen').classList.remove('open'); });
+  });
+  peer.on('error', e=>{
+    settled = true;
+    if (NET.peer!==peer) return;
+    if (e.type==='peer-unavailable') netStatus('join-status','Room not found — check the code with your host.','err');
+    else netStatus('join-status','Network error: '+e.type,'err');
+  });
+}
+function netClientData(d){
+  if (!d || typeof d!=='object') return;
+  if (d.t==='lobby'){
+    const el=document.getElementById('join-lobby-list'); if(!el) return;
+    let html = `<div class="net-lobby-row"><span class="seat-num">1</span><span class="who">${netEsc(d.hostName)}</span><span class="tag">👑 Host</span></div>`;
+    (d.seats||[]).forEach((nm,i)=>{
+      const me = nm!==null && nm===NET.myName;
+      html += nm!==null
+        ? `<div class="net-lobby-row${me?' me':''}"><span class="seat-num">${i+2}</span><span class="who">${netEsc(nm)}${me?' (you)':''}</span><span class="tag">👤 Seated</span></div>`
+        : `<div class="net-lobby-row open-seat"><span class="seat-num">${i+2}</span><span class="who">Open seat</span><span class="tag">🤖 AI if empty</span></div>`;
+    });
+    (d.unseated||[]).forEach(nm=>{
+      const me = nm===NET.myName;
+      html += `<div class="net-lobby-row${me?' me':''} open-seat"><span class="seat-num">—</span><span class="who">${netEsc(nm)}${me?' (you)':''}</span><span class="tag">No seat yet</span></div>`;
+    });
+    el.innerHTML = html;
+    if (d.started) netStatus('join-status','Game in progress — you\'ll join the next one.','ok');
+  }
+  else if (d.t==='start'){ document.getElementById('online-wait-screen').classList.add('open'); }
+  else if (d.t==='state'){
+    const prevG = (NET.mode==='join') ? G : null;
+    G = netUnpack(d.g);
+    NET.mySeat = d.seat;
+    const myTurn = netIsMyTurnClient();
+    // toggleSelect() during auction bidding is purely local UI state — the host only
+    // learns about it when we actually submit a bid. Without this, every heartbeat
+    // broadcast (every ~2s, or any unrelated render) would silently wipe out whatever
+    // cards we'd tapped so far.
+    if (prevG && myTurn && G.phase === 'AUCTION') {
+      const myPlayer = G.players.find(p => p.id === NET.mySeat);
+      const myHandIds = new Set((myPlayer?.hand || []).map(c => c.id));
+      G.selectedCards = (prevG.selectedCards || []).filter(c => myHandIds.has(c.id));
+    }
+    if (!NET.inGame){
+      NET.inGame = true;
+      document.getElementById('online-wait-screen').classList.remove('open');
+      document.body.classList.add('net-client');
+      document.getElementById('screen-setup').classList.remove('active');
+      document.getElementById('screen-game').classList.add('active');
+    }
+    document.body.classList.toggle('net-myturn', myTurn);
+    const banner = document.getElementById('net-spectate-banner');
+    if (banner) banner.textContent = myTurn ? '🎴 Your turn' : '👁 Watching — waiting on another player';
+    try{ render(); }catch(e){ console.error('client render error:', e); }
+    // PreDeal MA is modal-driven (not a rendered button row) — trigger it locally on
+    // the client the moment it becomes their turn, once per decision point.
+    if (G.phase === 'PREDEAL_MA' && G.awaitingHumanAction && G.preDealMAOrder[G.preDealMAIdx] === NET.mySeat) {
+      if (NET._preDealMAModalShownIdx !== G.preDealMAIdx) {
+        NET._preDealMAModalShownIdx = G.preDealMAIdx;
+        showPreDealMAChoice(NET.mySeat);
+      }
+    }
+    // Scoring modal replay — the summary object is stored in G.lastScoringSummary
+    // specifically so it survives the network round-trip (it's not otherwise part of state).
+    if (G.phase === 'SCORING' && G.lastScoringSummary && NET._scoringModalShownHand !== G.handNum) {
+      NET._scoringModalShownHand = G.handNum;
+      showScoringModal(G.lastScoringSummary);
+    }
+    if (G.lastWinnerSeat != null && NET._gameOverShown !== G.lastWinnerSeat + '_' + G.handNum) {
+      NET._gameOverShown = G.lastWinnerSeat + '_' + G.handNum;
+      const winner = G.players.find(p => p.id === G.lastWinnerSeat);
+      if (winner) showGameOver(winner);
+    }
+  }
+  else if (d.t==='reject'){
+    showModal('Move Rejected', d.msg||'That move was rejected by the host.', [], [{ label:'OK', fn: () => closeModal() }]);
+  }
+}
+function netIsMyTurnClient(){
+  if (NET.mySeat===null || !G) return false;
+  if (G.currentTrick && G.awaitingHumanAction) return G.currentTrick.currentSeat === NET.mySeat;
+  if (G.phase === 'AUCTION' && G.awaitingHumanAction) return G.auction?.currentBidder === NET.mySeat;
+  if (G.phase === 'TRUMP_SELECTION' && G.awaitingHumanAction) {
+    const seat = G.trumpSelectStep === 'vice' ? G.viceSeat : G.chiefSeat;
+    return seat === NET.mySeat;
+  }
+  if (G.phase === 'PARTNER_SELECTION' && G.partnerSelectPending) return G.chiefSeat === NET.mySeat;
+  if (G.phase === 'PREDEAL_MA' && G.awaitingHumanAction) {
+    return G.preDealMAOrder[G.preDealMAIdx] === NET.mySeat;
+  }
+  return false;
+}
+function netLeaveWait(){
+  document.getElementById('online-wait-screen').classList.remove('open');
+  netTeardown(); NET.mode='join';
+  netStatus('join-status','Left the room.');
+}
+function netSendIntent(action, payload){
+  if (!NET.hostConn || !NET.hostConn.open) return;
+  try{ NET.hostConn.send(Object.assign({t:'intent', action}, payload||{})); }catch(e){}
+}
+
+/* ── STATE SERIALIZATION & MASKING ── */
+function netPack(v){
+  if (v instanceof Set) return {__set:[...v].map(netPack)};
+  if (Array.isArray(v)) return v.map(netPack);
+  if (typeof v === 'function') return null;
+  if (v && typeof v === 'object'){ const o={}; for (const k in v){ const x=v[k]; if (typeof x!=='function') o[k]=netPack(x); } return o; }
+  return v;
+}
+function netUnpack(v){
+  if (v && typeof v === 'object'){
+    if (v.__set) return new Set(v.__set.map(netUnpack));
+    if (Array.isArray(v)) return v.map(netUnpack);
+    const o={}; for (const k in v) o[k]=netUnpack(v[k]); return o;
+  }
+  return v;
+}
+function netMaskCard(seat,i){
+  return { id:'masked'+seat+'_'+i, masked:true, suit:'Hidden', rank:0, name:'?', face:'?', strip:'?',
+    cat:'Neutral', iVP:0, eVP:0, pen:0, isJoker:false, jokerRole:null, vpLabel:'',
+    dualArrow:false, dualStar:false, dualSkull:false, dualVP:false };
+}
+function netSerializeG(forSeat){
+  const out = {};
+  for (const k in G){
+    if (typeof G[k] === 'function') continue;
+    out[k] = netPack(G[k]);
+  }
+  out.players = G.players.map(p => {
+    const packed = netPack(p);
+    if (p.id !== forSeat) {
+      packed.hand = p.hand.map((_,i)=>netMaskCard(p.id,i));
+      // Tableau (bid cards) are intentionally public — visible to all players in this game
+    }
+    return packed;
+  });
+  out.selectedCards = (forSeat === humanSeatForBroadcast()) ? netPack(G.selectedCards) : [];
+  return out;
+}
+// During broadcast, "my own hand" is whoever the recipient seat is — G.selectedCards on the
+// host only makes sense to forward to the seat it actually belongs to.
+function humanSeatForBroadcast(){ return G.awaitingHumanAction ? (G.currentTrick?.currentSeat ?? G.auction?.currentBidder ?? G.chiefSeat) : null; }
+
+function netScheduleState(){
+  if (NET.mode!=='host' || !NET.started) return;
+  clearTimeout(NET._stateTimer);
+  NET._stateTimer = setTimeout(netSendStates, 120);
+}
+function netSendStates(){
+  if (NET.mode!=='host' || !NET.started || !G || !G.numPlayers) return;
+  for (const seatStr of Object.keys(NET.remoteBySeat)){
+    const seat = +seatStr, conn = NET.remoteBySeat[seatStr];
+    if (!conn || !conn.open) continue;
+    try{ conn.send({t:'state', seat, g: netSerializeG(seat)}); }catch(e){}
+  }
+}
+
+/* ── INTENT HANDLING (HOST) ── */
+function netIsRemoteControlled(seat){
+  if (NET.mode!=='host' || !NET.started) return false;
+  return !!NET.remoteBySeat[seat];
+}
+function netSendReject(seat, msg){
+  const conn = NET.remoteBySeat[seat];
+  if (conn && conn.open){ try{ conn.send({t:'reject', msg}); }catch(e){} }
+}
+// Runs fn() on the host, capturing any showModal() calls it triggers (which would
+// otherwise pop up on the HOST's own screen even though the action belongs to a
+// remote player) and redirecting them to that remote seat as a rejection instead.
+function netExecuteAsSeat(seat, fn){
+  const realShowModal = showModal;
+  let captured = null;
+  showModal = (title, body) => { captured = body || title; };
+  try { fn(); }
+  catch (e) {
+    console.error('netApplyIntent error:', e);
+    addLog('⚠ Host error handling a remote action: ' + (e && e.message ? e.message : e), true);
+    captured = 'Move failed on the host — try again.';
+  }
+  finally { showModal = realShowModal; }
+  if (captured) netSendReject(seat, captured);
+}
+function netApplyIntent(seat, d){
+  if (!NET.started || !G || !G.numPlayers) return;
+  const player = G.players.find(p=>p.id===seat);
+  if (!player){ netSendReject(seat, 'Seat not found.'); return; }
+
+  if (d.action==='bid'){
+    if (G.phase!=='AUCTION' || G.auction?.currentBidder!==seat){ netSendReject(seat,'Not your turn to bid.'); return; }
+    const cards = player.hand.filter(c=>(d.cardIds||[]).includes(c.id));
+    netExecuteAsSeat(seat, () => humanBid(cards, seat));
+  }
+  else if (d.action==='selectTrump'){
+    if (G.phase!=='TRUMP_SELECTION' || !G.awaitingHumanAction){ netSendReject(seat,'Not trump selection.'); return; }
+    const step = G.trumpSelectStep;
+    const activeSeat = step==='vice' ? G.viceSeat : G.chiefSeat;
+    if (activeSeat!==seat){ netSendReject(seat,'Not your turn.'); return; }
+    const options = getTrumpOptions(seat, step);
+    const choice = options.find(o => o.type===d.optType && String(o.value)===String(d.optValue));
+    if (!choice){ netSendReject(seat,'Invalid trump choice.'); return; }
+    netExecuteAsSeat(seat, () => selectTrump(step, choice));
+  }
+  else if (d.action==='selectPartner'){
+    if (G.phase!=='PARTNER_SELECTION' || !G.partnerSelectPending || G.chiefSeat!==seat){ netSendReject(seat,'Not your turn to pick a partner.'); return; }
+    if (!G.players.find(p=>p.id===d.targetId)){ netSendReject(seat,'Invalid partner.'); return; }
+    netExecuteAsSeat(seat, () => selectPartner(d.targetId));
+  }
+  else if (d.action==='preDealMAActivate'){
+    if (G.phase!=='PREDEAL_MA' || !G.awaitingHumanAction || G.preDealMAOrder[G.preDealMAIdx]!==seat){ netSendReject(seat,'Not your turn.'); return; }
+    const card = (player.arcana||[]).find(c=>c.id===d.cardId);
+    if (!card){ netSendReject(seat,'Card not found.'); return; }
+    netExecuteAsSeat(seat, () => activatePreDealMA(seat, card, d.targetId ?? null));
+  }
+  else if (d.action==='preDealMASkip'){
+    if (G.phase!=='PREDEAL_MA' || !G.awaitingHumanAction || G.preDealMAOrder[G.preDealMAIdx]!==seat){ netSendReject(seat,'Not your turn.'); return; }
+    netExecuteAsSeat(seat, () => {
+      G.awaitingHumanAction = false;
+      G.preDealMAIdx++;
+      advancePreDealMA();
+      render();
+    });
+  }
+  else if (d.action==='playRound1Card'){
+    if (!G.currentTrick || G.currentTrick.currentSeat!==seat || !G.awaitingHumanAction){ netSendReject(seat,'Not your turn.'); return; }
+    const card = [...player.hand, ...player.tableau].find(c=>c.id===d.cardId);
+    if (!card){ netSendReject(seat,'Card not found.'); return; }
+    netExecuteAsSeat(seat, () => playRound1Card(seat, card));
+  }
+  else if (d.action==='playRound2Joker'){
+    if (!G.currentTrick || G.currentTrick.currentSeat!==seat || !G.awaitingHumanAction){ netSendReject(seat,'Not your turn.'); return; }
+    const card = player.tableau.find(c=>c.id===d.cardId && c.isJoker);
+    if (!card){ netSendReject(seat,'Card not found.'); return; }
+    netExecuteAsSeat(seat, () => playRound2Joker(seat, card));
+  }
+  else if (d.action==='passRound2'){
+    if (!G.currentTrick || G.currentTrick.currentSeat!==seat || !G.awaitingHumanAction){ netSendReject(seat,'Not your turn.'); return; }
+    netExecuteAsSeat(seat, () => passRound2(seat));
+  }
+  else if (d.action==='counterDecline'){
+    if (!G.currentTrick || !G.currentTrick.counterQueue || G.currentTrick.counterQueue[0]!==seat){ netSendReject(seat,'No counter offer pending.'); return; }
+    netExecuteAsSeat(seat, () => counterDecline(seat));
+  }
+  else if (d.action==='auctionPass'){
+    if (G.phase!=='AUCTION' || G.auction?.currentBidder!==seat){ netSendReject(seat,'Not your turn.'); return; }
+    netExecuteAsSeat(seat, () => placeBid(seat, []));
+  }
+  else { netSendReject(seat, 'Unknown action.'); }
+}
+
+/* ── CLIENT ACTION WRAPPERS ── */
+// Each wraps an existing local action function: on a network client, send an intent
+// to the host instead of executing anything locally; otherwise behave exactly as before.
+function netPlayRound1Card(seat, card) {
+  if (NET.mode === 'join') { netSendIntent('playRound1Card', { cardId: card.id }); return; }
+  playRound1Card(seat, card); render();
+}
+function netPlayRound2Joker(seat, card) {
+  if (NET.mode === 'join') { netSendIntent('playRound2Joker', { cardId: card.id }); return; }
+  playRound2Joker(seat, card); render();
+}
+function netAuctionPass(seat) {
+  if (NET.mode === 'join') { netSendIntent('auctionPass'); return; }
+  placeBid(seat, []); render();
+}
+function netAuctionBid(cards, seat) {
+  if (NET.mode === 'join') { netSendIntent('bid', { cardIds: cards.map(c=>c.id) }); return; }
+  humanBid(cards, seat); render();
+}
+function netSelectTrump(step, opt) {
+  if (NET.mode === 'join') { netSendIntent('selectTrump', { optType: opt.type, optValue: opt.value }); return; }
+  selectTrump(step, opt); render();
+}
+function netSelectPartner(targetId) {
+  if (NET.mode === 'join') { netSendIntent('selectPartner', { targetId }); return; }
+  selectPartner(targetId); render();
+}
+function netCounterDecline(seat) {
+  if (NET.mode === 'join') { netSendIntent('counterDecline'); return; }
+  counterDecline(seat); render();
+}
+function netPassRound2(seat) {
+  if (NET.mode === 'join') { netSendIntent('passRound2'); return; }
+  passRound2(seat); render();
+}
+function netPreDealMAActivate(cardId, targetId) {
+  if (NET.mode === 'join') { netSendIntent('preDealMAActivate', { cardId, targetId }); return; }
+}
+function netPreDealMASkip() {
+  if (NET.mode === 'join') { netSendIntent('preDealMASkip'); return; }
+}
+
+// ══════════════════════════════════════════════
+// SETUP UI
+// ══════════════════════════════════════════════
 let setupPlayerCount = 4;
-let setupTarget = 300;
+let setupTarget = 1000;
 let setupDifficulty = 'easy';
 
 document.querySelectorAll('#difficulty-btns .count-btn').forEach(btn => {
@@ -3586,7 +4696,7 @@ document.querySelectorAll('#difficulty-btns .count-btn').forEach(btn => {
     setupDifficulty = btn.dataset.d;
   };
 });
-const aiNames = ['Aria','Blaze','Coda','Dusk','Echo','Fern'];
+const aiNames = ['Aria','Blaze','Coda','Dusk','Echo','Fern','Gwen'];
 let playerSlotTypes = []; // 'human' or 'AI' per slot index 1..n-1
 
 function buildPlayerSlots(n) {
@@ -3634,27 +4744,57 @@ document.querySelectorAll('#count-btns .count-btn').forEach(btn => {
     btn.classList.add('selected');
     setupPlayerCount = parseInt(btn.dataset.n);
     buildPlayerSlots(setupPlayerCount);
+    if (NET.mode === 'host') { netPlaceUnseated(); netRenderHostLobby(); netBroadcastLobby(); }
   };
 });
 
 // Build initial slots
 buildPlayerSlots(setupPlayerCount);
 
-document.getElementById('t300').onclick = () => {
-  document.getElementById('t300').classList.add('selected');
-  document.getElementById('t500').classList.remove('selected');
-  setupTarget = 300;
-};
 document.getElementById('t500').onclick = () => {
   document.getElementById('t500').classList.add('selected');
-  document.getElementById('t300').classList.remove('selected');
+  document.getElementById('t750').classList.remove('selected');
+  document.getElementById('t1000').classList.remove('selected');
   setupTarget = 500;
+};
+document.getElementById('t750').onclick = () => {
+  document.getElementById('t750').classList.add('selected');
+  document.getElementById('t500').classList.remove('selected');
+  document.getElementById('t1000').classList.remove('selected');
+  setupTarget = 750;
+};
+document.getElementById('t1000').onclick = () => {
+  document.getElementById('t1000').classList.add('selected');
+  document.getElementById('t500').classList.remove('selected');
+  document.getElementById('t750').classList.remove('selected');
+  setupTarget = 1000;
 };
 
 document.getElementById('start-btn').onclick = () => {
   const name = document.getElementById('player-name-input').value.trim() || 'Ben';
   const cheatJokers = document.getElementById('cheat-jokers').checked;
   const useMA = document.getElementById('use-ma').checked;
+
+  if (NET.mode === 'host') {
+    if (!NET.roomCode) { netStatus('net-status-host', 'Room is not ready yet — please wait.', 'err'); return; }
+    const n = setupPlayerCount;
+    const playerConfigs = [{ name, type: 'human' }];
+    for (let i = 1; i < n; i++) {
+      const j = NET.seatAssign[i];
+      playerConfigs.push({ name: j ? j.name : aiNames[i - 1], type: j ? 'human' : 'AI' });
+    }
+    document.getElementById('screen-setup').classList.remove('active');
+    document.getElementById('screen-game').classList.add('active');
+    initGame(playerConfigs, setupTarget, cheatJokers, useMA, setupDifficulty);
+    NET.started = true;
+    NET.remoteBySeat = {};
+    for (let i = 1; i < n; i++) if (NET.seatAssign[i]) NET.remoteBySeat[i] = NET.seatAssign[i].conn;
+    netBroadcast({ t:'start' });
+    if (NET.stateInterval) clearInterval(NET.stateInterval);
+    NET.stateInterval = setInterval(netSendStates, 2000); // safety net for any change that skips render()
+    netSendStates();
+    return;
+  }
 
   const slots = document.querySelectorAll('#player-slots .player-slot');
   const playerConfigs = [{ name, type: 'human' }];
@@ -3673,8 +4813,10 @@ document.getElementById('start-btn').onclick = () => {
 };
 
 function showSetup() {
+  netTeardown();
   document.getElementById('screen-game').classList.remove('active');
   document.getElementById('screen-setup').classList.add('active');
+  document.body.classList.remove('net-client');
 }
 </script>
 </body>
